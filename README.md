@@ -5,6 +5,33 @@ This is the starter repository for **AI Foundations: Architecting the Next Gener
 [![Fork this template](https://img.shields.io/badge/Fork_this_template-24292e?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Bumbolio/agentic-coding-starter/fork)
 [![View syllabus](https://img.shields.io/badge/View_syllabus-a8361a?style=for-the-badge)](https://bumbolio.github.io/agentic-coding-starter/)
 
+## About this project — musicbot
+
+A Cloudflare-hosted web app that lets TIDAL users have a natural-language conversation with their library to discover new music, learning their taste from explicit feedback over time. Full spec in [`docs/PRD.md`](docs/PRD.md); phased build plan in [`docs/BUILDPLAN.md`](docs/BUILDPLAN.md).
+
+🔗 **Live site:** https://musicbot.musicbot-cs.workers.dev/
+
+### Bring your own key (BYOK)
+
+The app does not ship with a managed LLM. Each user pastes their own Google AI Studio API key in `/settings`; the key is stored in Cloudflare KV (per-user) and proxied through Cloudflare AI Gateway. No charges flow through the developer's account. Free Google AI Studio tier is sufficient for the demo.
+
+### TIDAL developer-account setup
+
+Phase 1 needs TIDAL API credentials. One-time setup before running `wrangler dev`:
+
+1. Sign in to [TIDAL Developer Portal](https://developer.tidal.com/) with a Tidal account that has an active subscription (a fresh 30-day free trial works fine for the v1 build window).
+2. Go to **Dashboard → Create app**. Set the redirect URI to `http://localhost:8787/api/auth/callback` for local dev (add a production URI later when deploying).
+3. Copy the **Client ID** and **Client Secret** into a local `musicbot/.dev.vars` (copy from [`musicbot/.dev.vars.example`](musicbot/.dev.vars.example) — gitignored).
+4. For production, push the same values as Wrangler secrets:
+   ```
+   wrangler secret put TIDAL_CLIENT_ID
+   wrangler secret put TIDAL_CLIENT_SECRET
+   ```
+
+### Cloudflare resources
+
+D1 and KV are already created and wired into `musicbot/wrangler.jsonc`. The AI Gateway slug in `vars.AI_GATEWAY_BASE_URL` is `REPLACE_ME` — create a gateway in **Cloudflare Dashboard → AI → AI Gateway** and paste the slug into the URL before deploying Phase 2.
+
 ## What's in here
 
 ```

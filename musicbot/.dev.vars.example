@@ -1,0 +1,8 @@
+# Local secrets for `wrangler dev`. Copy to .dev.vars and fill in values.
+# .dev.vars is gitignored; this .example file is committed as a template.
+# Production secrets go in via `wrangler secret put NAME`, not this file.
+
+# TIDAL OAuth credentials (Phase 1).
+# Create an app at https://developer.tidal.com/dashboard, then paste here.
+TIDAL_CLIENT_ID=your_tidal_client_id_here
+TIDAL_CLIENT_SECRET=your_tidal_client_secret_here

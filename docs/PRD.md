@@ -1,7 +1,7 @@
 # Product Requirements Document (PRD)
 
 > **Status:** Draft
-> **Last updated:** 2026-05-17
+> **Last updated:** 2026-05-20
 > **Author:** Carlos Stanton
 > **Stakeholder:** Yourself / class project demo
 
@@ -80,9 +80,8 @@ Tidal knows your taste — its "For You" mixes and daily discoveries land often 
 
 | Need | CF Product | Why |
 |---|---|---|
-| Hosting the web UI + backend | Workers + Workers Assets | One Worker serves the static frontend from `./public` and `/api/*` routes; bindings (D1/R2/KV/AI Gateway) attach natively. Preferred over Pages for full-stack apps where the frontend and Worker are co-deployed. |
-| Structured data | D1 | SQL database for users, taste profiles, recommendation history, feedback events |
-| Cross-device sync | R2 | Store library snapshot JSON for fast cold-start profile building |
+| Hosting the web UI + backend | Workers + Workers Assets | One Worker serves the static frontend from `./public` and `/api/*` routes; bindings (D1/KV/AI Gateway) attach natively. Preferred over Pages for full-stack apps where the frontend and Worker are co-deployed. |
+| Structured data | D1 | SQL database for users, taste profiles, recommendation history, feedback events. Also holds the library row-by-row — the taste-profile builder reconstructs the library blob from D1 rows on demand, so no separate object store is needed for v1. |
 | AI call proxying | AI Gateway | Proxies the user's own API key — adds logging and rate limiting for free |
 | Session / auth tokens | KV | Fast global key-value store for auth tokens |
 

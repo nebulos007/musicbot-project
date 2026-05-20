@@ -1,7 +1,7 @@
 # Build Plan
 
 > **Status:** Draft
-> **Last updated:** 2026-05-11
+> **Last updated:** 2026-05-20
 > **Current phase:** Phase 0 (scaffolding mostly done — finalizing)
 
 ---
@@ -35,12 +35,12 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 
 ### Phase 0 — Scaffolding (mostly done)
 
-**Goal:** Worker bootstrapped, deploy pipeline working, public URL in README, Cloudflare bindings (D1 / R2 / KV / AI Gateway) declared.
+**Goal:** Worker bootstrapped, deploy pipeline working, public URL in README, Cloudflare bindings (D1 / KV / AI Gateway) declared.
 
 **Context to load:** `CLAUDE.md`, `docs/PRD.md` §6, existing `musicbot/` directory, `musicbot/wrangler.jsonc`.
 
 **Files this phase creates/modifies:**
-- `musicbot/wrangler.jsonc` — add `[[d1_databases]]`, `[[r2_buckets]]`, `[[kv_namespaces]]`, AI Gateway env var
+- `musicbot/wrangler.jsonc` — add `d1_databases`, `kv_namespaces`, AI Gateway env var
 - `musicbot/src/index.ts` — verify smoke route still works after bindings added
 - `README.md` — public URL, BYOK note, TIDAL developer-account setup note
 - `musicbot/.dev.vars.example` — placeholder for local secrets
@@ -51,7 +51,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 - [ ] `npm test` passes.
 - [ ] `wrangler deploy` produces a public URL.
 - [ ] URL in `README.md`.
-- [ ] D1, R2, KV bindings declared in `wrangler.jsonc` (resources can be created later).
+- [ ] D1, KV bindings declared in `wrangler.jsonc` (resources can be created later).
 
 **Session budget:** < 1.
 
@@ -69,7 +69,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 - `musicbot/wrangler.jsonc` — finalize bindings
 - `musicbot/src/index.ts` — Hono router (or fetch handler) with `/api/*` + asset fall-through
 - `musicbot/src/routes/auth.ts` — TIDAL OAuth 2.1 flow (authorization code + PKCE), session creation, access/refresh tokens stored in KV
-- `musicbot/src/routes/library.ts` — paginated library sync (page size + 429 backoff TBD from Phase-1 discovery), writes to D1, snapshot to R2
+- `musicbot/src/routes/library.ts` — paginated library sync (page size + 429 backoff TBD from Phase-1 discovery), writes library rows to D1
 - `musicbot/src/db/schema.sql` — `users`, `library_songs`, `sessions` tables
 - `musicbot/public/index.html` — React entry
 - `musicbot/src/client/App.tsx` — top-level routes (`/login`, `/`, `/settings`)
@@ -87,7 +87,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 
 **Done-when:**
 - [ ] `/login` → "Connect Tidal" → TIDAL OAuth → lands on `/`.
-- [ ] Library fetched (paginated) and persisted to D1; snapshot in R2.
+- [ ] Library fetched (paginated) and persisted to D1.
 - [ ] `/` shows tabbed Chat/Library, gear → `/settings`, "Loaded N songs" line.
 - [ ] At least 3 placeholder cards render (e.g., "first 3 artists from your library").
 - [ ] `npm test` passes; `wrangler deploy` ships a working public URL.
@@ -258,6 +258,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 | 2026-05-07 | — | Story #5 (playlist) and #6 (taste avatar) excluded from this plan | Should/Could-haves below the v1 demo bar; will return via decision log if scope changes. |
 | 2026-05-11 | — | YouTube-playlist free tier deferred to v2 | Surfaced during planning. Strategically interesting (real free tier, not just trial mode) but doubles v1 scope and serves no v1 user — the demo runs on the developer's premium-service account. Captured in PRD §3 v2 vision. |
 | 2026-05-11 | All | v1 reference platform swapped from Apple Music to Tidal | Apple Developer account is $99/yr before any code ships; TIDAL developer access is free and the Player SDK is covered by Tidal's 30-day trial for the testing window. TIDAL's API shape (OAuth 2.1 + Player SDK + catalog metadata) is the closest substitute for MusicKit JS, so the Phase-1 skeleton ports cleanly. Apple Music demoted to v2 parallel premium tier (was Tidal's old slot). PRD §1–§8 rewritten; native-client vision pushed from v2 to v3+. |
+| 2026-05-20 | Phase 0, Phase 1 | R2 dropped; library snapshot reconstructed from D1 rows | R2 was an optimization, not a need — D1 already holds library rows after Phase 1's sync, and rebuilding the library blob from `SELECT * FROM library_songs WHERE user_id=?` is cheap at v1 sizes. Dropping R2 avoids the Cloudflare R2-enable flow (payment method required) and removes a service surface. If cold-start taste-profile builds become slow with real data, revisit. |
 
 ---
 

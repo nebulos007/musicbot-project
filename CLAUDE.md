@@ -23,8 +23,7 @@ _Planned stack — most pieces aren't installed yet. As of now only TypeScript, 
 - **Backend framework:** Hono (planned)
 - **Frontend:** React + Headless UI + Tailwind CSS (per `docs/DESIGN.md` defaults)
 - **Frontend hosting:** Workers Assets — the same Worker serves `./public` static files and `/api/*` routes.
-- **Database:** Cloudflare D1 (users, taste profiles, recommendation history, feedback events)
-- **Object storage:** Cloudflare R2 (library snapshot JSON for cold-start profile building)
+- **Database:** Cloudflare D1 (users, taste profiles, recommendation history, feedback events, library rows)
 - **KV:** Cloudflare KV (TIDAL OAuth tokens, session state)
 - **AI proxy:** Cloudflare AI Gateway (proxies the user's BYOK LLM call; adds logging + rate limiting)
 - **Testing:** Vitest with `@cloudflare/vitest-pool-workers`
@@ -62,7 +61,7 @@ _Planned stack — most pieces aren't installed yet. As of now only TypeScript, 
 ## Cloudflare-specific notes
 
 - Use `wrangler dev` for local development. It runs the real Workers runtime (miniflare), not Node.
-- Environment bindings (D1, R2, KV, Workers AI) are declared in `wrangler.toml` and accessed via `env.BINDING_NAME`, not `process.env`.
+- Environment bindings (D1, KV, AI Gateway vars) are declared in `wrangler.jsonc` and accessed via `env.BINDING_NAME`, not `process.env`.
 - For Cloudflare docs, two LLM-optimized entry points exist:
   - `https://developers.cloudflare.com/llms.txt` — the **index**. Lightweight; fetch this first to see what products and pages exist and to find the right deeper link.
   - `https://developers.cloudflare.com/llms-full.txt` — the full corpus. Heavy; only fetch this (or a specific page from the index) when you need real product details.
