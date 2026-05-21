@@ -1,8 +1,8 @@
 # Build Plan
 
 > **Status:** Draft
-> **Last updated:** 2026-05-20
-> **Current phase:** Phase 0 (scaffolding mostly done — finalizing)
+> **Last updated:** 2026-05-21
+> **Current phase:** Phase 1b (TIDAL OAuth) — 1a shipped 2026-05-21
 
 ---
 
@@ -61,40 +61,114 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 
 ### Phase 1 — Connect Tidal & see your library
 
-**Goal:** A user signs in with Tidal, the app fetches and stores their library, and the chat screen shows recommendation cards (placeholder content) plus a "Loaded N songs" message. Maps to PRD §8 week-2 milestone.
+The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to keep each session focused. These are **horizontal layers, not vertical slices** — a deliberate exception to §Strategy because the alternative was a single 2+ session phase that risked context exhaustion. End-to-end user value arrives at 1d; 1a–1c leave the worker deployable but invisible. Maps to PRD §8 week-2 milestone in aggregate.
 
-**Context to load:** PRD §4 stories 1+3, §6, §7 (TIDAL Web API + Player SDK limits), §8 week-2; DESIGN §2 (IA, hero screen — *use the static "Loaded N songs" fallback, not the animation*), §3, §4, §5; `CLAUDE.md`; existing `musicbot/` files.
+#### Phase 1a — Backend foundation ✅ Done (2026-05-21)
+
+**Goal:** Hono router on Workers, D1 schema for users/library/sessions, `/api/health` smoke route, tests green.
+
+**Context loaded:** PRD §6; `CLAUDE.md`; existing `musicbot/` files.
+
+**Files created/modified:**
+- `musicbot/src/index.ts` — Hono app, `/api/health`
+- `musicbot/src/db/schema.sql` — `users`, `library_songs`, `sessions` (validated against local D1)
+- `musicbot/test/index.spec.ts` — `/api/health` smoke test (replaces scaffold)
+- `musicbot/package.json` — `hono` dependency
+
+**Notes for future sessions:**
+- KV `SESSIONS` namespace name is a misnomer — it holds OAuth-flow state (PKCE verifier, state) and TIDAL tokens; persistent session cookies live in D1 `sessions`. Renaming the binding requires recreating the namespace, so the name is intentionally not changed.
+- Schema applied locally via `wrangler d1 execute musicbot --file=src/db/schema.sql --local`. Remote D1 has **not** been seeded — run with `--remote` before the first deploy that needs it.
+
+#### Phase 1b — TIDAL OAuth + session
+
+**Goal:** A user hits `/api/auth/login` → completes TIDAL OAuth 2.1 (authorization code + PKCE) → returns to `/api/auth/callback` with a code → app exchanges for tokens, stores them in KV, creates a D1 session row, sets a session cookie, redirects to `/`. No library sync yet.
+
+**Context to load:** PRD §6, §7 (TIDAL platform risks); **current TIDAL Developer Portal docs** — auth/token endpoint URLs, scope strings for collection read/write, PKCE confidential-vs-public client semantics — *fetch fresh, don't write from training data*; `CLAUDE.md`; Phase 1a files (`src/index.ts`, `src/db/schema.sql`).
+
+**Known config (from 2026-05-21 setup):**
+- Registered redirect URI: `http://localhost:8787/api/auth/callback`
+- Scopes: collection read + write
+- `TIDAL_CLIENT_ID` and `TIDAL_CLIENT_SECRET` already in `musicbot/.dev.vars`
+- Confidential vs public client status not confirmed in TIDAL portal — code path should send the client secret to the token endpoint (works for confidential; a strict public client would reject it — handle this case if it surfaces)
 
 **Files this phase creates/modifies:**
-- `musicbot/wrangler.jsonc` — finalize bindings
-- `musicbot/src/index.ts` — Hono router (or fetch handler) with `/api/*` + asset fall-through
-- `musicbot/src/routes/auth.ts` — TIDAL OAuth 2.1 flow (authorization code + PKCE), session creation, access/refresh tokens stored in KV
-- `musicbot/src/routes/library.ts` — paginated library sync (page size + 429 backoff TBD from Phase-1 discovery), writes library rows to D1
-- `musicbot/src/db/schema.sql` — `users`, `library_songs`, `sessions` tables
-- `musicbot/public/index.html` — React entry
-- `musicbot/src/client/App.tsx` — top-level routes (`/login`, `/`, `/settings`)
-- `musicbot/src/client/pages/Login.tsx` — "Connect Tidal" button
-- `musicbot/src/client/pages/Chat.tsx` — Headless UI `TabGroup` (Chat / Library), gear → `/settings`, chat input, cards list, "Loaded N songs" header
-- `musicbot/src/client/components/RecommendationCard.tsx` — album art + title/artist + 4 placeholder buttons
-- `musicbot/src/client/lib/tidal.ts` — TIDAL Web API + Player SDK wrapper
-- Tailwind + Headless UI + Heroicons + Fraunces font setup
-- `README.md` — TIDAL developer-account setup notes
+- `musicbot/src/routes/auth.ts` — `/api/auth/login` (generate PKCE verifier + state, store in KV with TTL, redirect to TIDAL), `/api/auth/callback` (verify state, exchange code, persist user + tokens, set cookie)
+- `musicbot/src/lib/tidal.ts` — token endpoint helper, `refreshIfNeeded(userId)` helper
+- `musicbot/src/lib/session.ts` — session cookie creation, validation middleware
+- `musicbot/src/index.ts` — mount auth routes
 
 **Tests this phase adds:**
-- `auth.spec.ts` — OAuth callback exchanges code for tokens; PKCE verifier round-trips
-- `library.spec.ts` — library sync stores songs in D1, paginates, retries on 429
-- `RecommendationCard.spec.tsx` — renders title, artist, art, 4 buttons; passes a11y check
+- `auth.spec.ts` — callback exchanges code for tokens (mock TIDAL); PKCE verifier round-trips KV; state mismatch rejected; session cookie set
+- `session.spec.ts` — middleware rejects missing/invalid/expired cookies
 
 **Done-when:**
-- [ ] `/login` → "Connect Tidal" → TIDAL OAuth → lands on `/`.
-- [ ] Library fetched (paginated) and persisted to D1.
-- [ ] `/` shows tabbed Chat/Library, gear → `/settings`, "Loaded N songs" line.
-- [ ] At least 3 placeholder cards render (e.g., "first 3 artists from your library").
+- [ ] Hitting `/api/auth/login` locally redirects to TIDAL's auth URL with a valid PKCE challenge.
+- [ ] `/api/auth/callback` with a valid code creates a user row, stores tokens in KV, sets a session cookie, redirects to `/`.
+- [ ] PKCE verifier auto-expires from KV (TTL set on write).
+- [ ] Tests pass; `npm test` green.
+
+**Session budget:** 1.
+
+**Risks / unknowns:** TIDAL OAuth 2.1 specifics (PKCE-only vs PKCE + secret); refresh-token rotation behavior; session cookie attributes on Workers (SameSite=Lax, Secure in prod, Path=/).
+
+#### Phase 1c — Library sync
+
+**Goal:** Authenticated user's TIDAL library is fetched (paginated, with 429 backoff) and persisted to D1. `/api/library/count` returns the count.
+
+**Context to load:** PRD §4 story 3, §6, §7; current TIDAL library/collection endpoint docs (pagination shape, rate limits); Phase 1a–1b files.
+
+**Files this phase creates/modifies:**
+- `musicbot/src/routes/library.ts` — `POST /api/library/sync`, `GET /api/library/count`
+- `musicbot/src/lib/tidal.ts` — add `fetchLibraryPage`, `fetchAllLibrary` with `Retry-After`-respecting backoff
+- `musicbot/src/index.ts` — mount library routes behind session middleware
+
+**Tests this phase adds:**
+- `library.spec.ts` — sync stores songs in D1; pagination crosses page boundaries; 429 triggers backoff + retry; second sync is idempotent (updates `synced_at`, no dup inserts)
+- `tidal.spec.ts` — backoff respects `Retry-After`
+
+**Done-when:**
+- [ ] Sync paginates the full library and writes to D1.
+- [ ] `GET /api/library/count` returns the correct count.
+- [ ] Re-running sync is idempotent.
+- [ ] Tests pass.
+
+**Session budget:** 1.
+
+**Risks / unknowns:** TIDAL pagination shape + rate limits (PRD §6 flags as Phase-1 discovery); Worker subrequest limits on large libraries (may need staged sync via Queues or cursor resumption — surface if it bites).
+
+#### Phase 1d — React frontend
+
+**Goal:** `/login` → "Connect Tidal" → OAuth round-trip → lands on `/` showing tabbed Chat/Library, gear → `/settings`, "Loaded N songs" header, ≥3 placeholder recommendation cards.
+
+**Context to load:** DESIGN §2, §3, §4, §5; PRD §4 stories 1+3; `CLAUDE.md`; Phase 1a–1c files. *Use the static "Loaded N songs" fallback, not the cold-start animation (deferred to Phase 6).*
+
+**Files this phase creates/modifies:**
+- `musicbot/vite.config.ts` — Vite build emitting to `public/`
+- `musicbot/src/client/main.tsx` — React entry
+- `musicbot/src/client/App.tsx` — routes (`/login`, `/`, `/settings`)
+- `musicbot/src/client/pages/Login.tsx` — Connect Tidal button
+- `musicbot/src/client/pages/Chat.tsx` — Headless UI `TabGroup`, gear → settings, chat input, cards list, "Loaded N songs" header
+- `musicbot/src/client/components/RecommendationCard.tsx` — placeholder cards with 4 buttons
+- `musicbot/src/client/lib/api.ts` — fetch wrapper using the session cookie
+- `musicbot/public/index.html` — replace scaffold with React mount
+- `musicbot/wrangler.jsonc` — `assets.not_found_handling: "single-page-application"` for client routing
+- Tailwind + Fraunces font + Headless UI + Heroicons setup
+- `README.md` — TIDAL developer-account setup notes
+- `package.json` — `react`, `react-dom`, `@vitejs/plugin-react`, `vite`, `tailwindcss`, `@headlessui/react`, `@heroicons/react`, type packages (approve as a batch when sub-phase starts)
+
+**Tests this phase adds:**
+- `RecommendationCard.spec.tsx` — renders title, artist, art, 4 buttons; basic a11y
+
+**Done-when:**
+- [ ] `/login` shows "Connect Tidal".
+- [ ] OAuth completes and lands on `/`.
+- [ ] `/` shows tabs, gear → `/settings`, "Loaded N songs" line.
+- [ ] ≥3 placeholder cards render.
 - [ ] `npm test` passes; `wrangler deploy` ships a working public URL.
 
-**Session budget:** 1–2 (chunky — most likely to spill).
+**Session budget:** 1–2.
 
-**Risks / unknowns:** TIDAL OAuth 2.1 + PKCE on a Workers backend; refresh-token rotation semantics; Player SDK initialization in-browser; React build pipeline on Workers/Pages; first encounter with the "TIDAL platform is newer / less documented" risk from PRD §7.
+**Risks / unknowns:** Vite + Workers Assets integration (build output path, dev workflow); SPA fallback on Workers Assets; Tailwind v4-vs-v3 ergonomics.
 
 ---
 
@@ -102,7 +176,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 
 **Goal:** User enters a natural-language prompt; the app calls their BYOK LLM with library context and replaces placeholder cards with real recommendations. Maps to first half of PRD §8 week-3 milestone.
 
-**Context to load:** PRD §4 story 1, §6 (AI Gateway, BYOK); DESIGN §3 (chat bubble — *no streaming yet*), §6 (chat width on desktop); `CLAUDE.md`; Phase 1 files.
+**Context to load:** PRD §4 story 1, §6 (AI Gateway, BYOK); DESIGN §3 (chat bubble — *no streaming yet*), §6 (chat width on desktop); `CLAUDE.md`; Phase 1a–1d files.
 
 **Files this phase creates/modifies:**
 - `musicbot/src/routes/chat.ts` — POST `/api/chat` (prompt → LLM → JSON recs)
@@ -135,7 +209,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 
 **Goal:** Like / dislike / add-to-library / play buttons on each card all work and write feedback events to D1. Maps to second half of PRD §8 week-3 milestone.
 
-**Context to load:** PRD §4 stories 2+3; DESIGN §3 (card), §5 (a11y — color + icon, 44px tap targets); Phase 1+2 files.
+**Context to load:** PRD §4 stories 2+3; DESIGN §3 (card), §5 (a11y — color + icon, 44px tap targets); Phase 1a–1d + Phase 2 files.
 
 **Files this phase creates/modifies:**
 - `musicbot/src/db/schema.sql` — add `feedback_events` (`user_id`, `song_id`, `kind`, `created_at`)
@@ -166,7 +240,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 
 **Goal:** Recommendations measurably differ between session 1 (cold start) and session 5 (after feedback) because the LLM prompt is enriched with a derived taste profile. Maps to PRD §8 week-4 demo milestone.
 
-**Context to load:** PRD §3 (success criteria), §4 story 2, §7 (cold-start risk); DESIGN §3; Phase 1–3 files.
+**Context to load:** PRD §3 (success criteria), §4 story 2, §7 (cold-start risk); DESIGN §3; Phase 1a–1d + Phases 2–3 files.
 
 **Files this phase creates/modifies:**
 - `musicbot/src/lib/tasteProfile.ts` — derive a profile from library + feedback (favored genres, artists, eras; recent dislikes as exclusions)
@@ -196,7 +270,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 
 **Goal:** Users see past recommendations with their ratings in the Library tab. Maps to PRD §4 story #4 (Should-have).
 
-**Context to load:** PRD §4 story 4; DESIGN §2 (Library tab), §6 (1/2/3-col grid); Phase 1+3 files.
+**Context to load:** PRD §4 story 4; DESIGN §2 (Library tab), §6 (1/2/3-col grid); Phase 1a–1d + Phase 3 files.
 
 **Files this phase creates/modifies:**
 - `musicbot/src/routes/history.ts` — paginated history (newest first)
@@ -259,6 +333,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 | 2026-05-11 | — | YouTube-playlist free tier deferred to v2 | Surfaced during planning. Strategically interesting (real free tier, not just trial mode) but doubles v1 scope and serves no v1 user — the demo runs on the developer's premium-service account. Captured in PRD §3 v2 vision. |
 | 2026-05-11 | All | v1 reference platform swapped from Apple Music to Tidal | Apple Developer account is $99/yr before any code ships; TIDAL developer access is free and the Player SDK is covered by Tidal's 30-day trial for the testing window. TIDAL's API shape (OAuth 2.1 + Player SDK + catalog metadata) is the closest substitute for MusicKit JS, so the Phase-1 skeleton ports cleanly. Apple Music demoted to v2 parallel premium tier (was Tidal's old slot). PRD §1–§8 rewritten; native-client vision pushed from v2 to v3+. |
 | 2026-05-20 | Phase 0, Phase 1 | R2 dropped; library snapshot reconstructed from D1 rows | R2 was an optimization, not a need — D1 already holds library rows after Phase 1's sync, and rebuilding the library blob from `SELECT * FROM library_songs WHERE user_id=?` is cheap at v1 sizes. Dropping R2 avoids the Cloudflare R2-enable flow (payment method required) and removes a service surface. If cold-start taste-profile builds become slow with real data, revisit. |
+| 2026-05-21 | Phase 1 | Phase 1 split into 1a–1d sub-phases (1a shipped) | Phase 1's session budget was 1–2 and flagged as "most likely to spill". Sub-phases are horizontal layers (foundation → auth → sync → UI), not vertical slices — a deliberate exception to §Strategy because the alternative was a single phase that risked context exhaustion mid-implementation. Each sub-phase leaves the worker deployable; user-visible value lands at 1d. |
 
 ---
 
