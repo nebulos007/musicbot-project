@@ -2,7 +2,7 @@
 
 > **Status:** Draft
 > **Last updated:** 2026-05-21
-> **Current phase:** Phase 1b (TIDAL OAuth) — 1a shipped 2026-05-21
+> **Current phase:** Phase 1c (Library sync) — 1b shipped 2026-05-21
 
 ---
 
@@ -79,37 +79,34 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 - KV `SESSIONS` namespace name is a misnomer — it holds OAuth-flow state (PKCE verifier, state) and TIDAL tokens; persistent session cookies live in D1 `sessions`. Renaming the binding requires recreating the namespace, so the name is intentionally not changed.
 - Schema applied locally via `wrangler d1 execute musicbot --file=src/db/schema.sql --local`. Remote D1 has **not** been seeded — run with `--remote` before the first deploy that needs it.
 
-#### Phase 1b — TIDAL OAuth + session
+#### Phase 1b — TIDAL OAuth + session ✅ Done (2026-05-21)
 
 **Goal:** A user hits `/api/auth/login` → completes TIDAL OAuth 2.1 (authorization code + PKCE) → returns to `/api/auth/callback` with a code → app exchanges for tokens, stores them in KV, creates a D1 session row, sets a session cookie, redirects to `/`. No library sync yet.
 
-**Context to load:** PRD §6, §7 (TIDAL platform risks); **current TIDAL Developer Portal docs** — auth/token endpoint URLs, scope strings for collection read/write, PKCE confidential-vs-public client semantics — *fetch fresh, don't write from training data*; `CLAUDE.md`; Phase 1a files (`src/index.ts`, `src/db/schema.sql`).
+**Files created/modified:**
+- `musicbot/src/routes/auth.ts` — `/api/auth/login` + `/api/auth/callback`
+- `musicbot/src/lib/tidal.ts` — endpoint constants, PKCE helpers, `exchangeCode`, `refreshTokens`, `fetchMe`, `refreshIfNeeded`
+- `musicbot/src/lib/session.ts` — `createSession`, `setSessionCookie`, `requireSession` middleware
+- `musicbot/src/index.ts` — mount `authRouter` at `/api/auth`
+- `musicbot/src/env.d.ts` — augment `Cloudflare.Env` with `TIDAL_CLIENT_ID` / `TIDAL_CLIENT_SECRET` (not picked up by `wrangler types` because they live in `.dev.vars`, not `wrangler.jsonc`)
+- `musicbot/test/auth.spec.ts`, `musicbot/test/session.spec.ts` — 10 new tests (all green)
+- `musicbot/test/tsconfig.json` — include `../src/env.d.ts` so the augmentation reaches test compilation
 
-**Known config (from 2026-05-21 setup):**
-- Registered redirect URI: `http://localhost:8787/api/auth/callback`
-- Scopes: collection read + write
-- `TIDAL_CLIENT_ID` and `TIDAL_CLIENT_SECRET` already in `musicbot/.dev.vars`
-- Confidential vs public client status not confirmed in TIDAL portal — code path should send the client secret to the token endpoint (works for confidential; a strict public client would reject it — handle this case if it surfaces)
-
-**Files this phase creates/modifies:**
-- `musicbot/src/routes/auth.ts` — `/api/auth/login` (generate PKCE verifier + state, store in KV with TTL, redirect to TIDAL), `/api/auth/callback` (verify state, exchange code, persist user + tokens, set cookie)
-- `musicbot/src/lib/tidal.ts` — token endpoint helper, `refreshIfNeeded(userId)` helper
-- `musicbot/src/lib/session.ts` — session cookie creation, validation middleware
-- `musicbot/src/index.ts` — mount auth routes
-
-**Tests this phase adds:**
-- `auth.spec.ts` — callback exchanges code for tokens (mock TIDAL); PKCE verifier round-trips KV; state mismatch rejected; session cookie set
-- `session.spec.ts` — middleware rejects missing/invalid/expired cookies
+**Notes for future sessions:**
+- **Endpoint URLs (confirmed against `tidal-music/tidal-sdk` Auth.md + Developer Portal search, 2026-05-21):** authorize `https://login.tidal.com/authorize`, token `https://auth.tidal.com/v1/oauth2/token`, /me `https://openapi.tidal.com/v2/users/me`. The `listen.tidal.com`/`r_usr w_usr` flow on the web is the *unofficial* reverse-engineered client — do not copy from it.
+- **Scope strings are dot-separated:** `user.read collection.read collection.write`. `user.read` was added beyond the 1a note ("collection read + write") because the callback needs `/v2/users/me` to identify the user before writing the D1 row. If the TIDAL portal app isn't allowlisted for `user.read`, the call will fail and Phase 1b will need a different user-ID strategy (decode token, defer to 1c).
+- **Client secret is sent in the form body** (`client_secret=…`), not Basic auth. Works for the registered confidential client; a strict public client would reject this and need PKCE-only — handle if it surfaces.
+- **`/v2/users/me` returns JSON:API shape** `{ data: { id: "..." } }`. The lib also tolerates flat `{ id }` as a fallback.
+- **PKCE entry TTL:** 600s in KV; deleted on successful callback. State + verifier are stored under `pkce:<state>`; tokens under `tidal_tokens:<userId>`.
+- **Session cookie:** `mb_session`, HttpOnly, SameSite=Lax, Secure when scheme is https, 30-day TTL. Cookie stores only the session id; the row in D1 `sessions` is the source of truth.
+- **Tests mock external fetches with `fetchMock` from `cloudflare:test`** — `fetchMock.activate()` + `disableNetConnect()` in `beforeAll`, route-specific `.intercept(...).reply(...)` per test, `assertNoPendingInterceptors()` in `afterEach`.
+- **Manually verified end-to-end against a real TIDAL account on 2026-05-21**: login → consent → callback → user row written (real `tidal_user_id`) → session row written (30-day expiry) → cookie set → redirect to `/`. The scaffold `public/index.html` still loads at `/` (its H1 says "404 Not Found" because the scaffold JS fetches `/message`, which Hono 404s — harmless cosmetic only; Phase 1d replaces the page).
 
 **Done-when:**
-- [ ] Hitting `/api/auth/login` locally redirects to TIDAL's auth URL with a valid PKCE challenge.
-- [ ] `/api/auth/callback` with a valid code creates a user row, stores tokens in KV, sets a session cookie, redirects to `/`.
-- [ ] PKCE verifier auto-expires from KV (TTL set on write).
-- [ ] Tests pass; `npm test` green.
-
-**Session budget:** 1.
-
-**Risks / unknowns:** TIDAL OAuth 2.1 specifics (PKCE-only vs PKCE + secret); refresh-token rotation behavior; session cookie attributes on Workers (SameSite=Lax, Secure in prod, Path=/).
+- [x] Hitting `/api/auth/login` redirects to TIDAL's auth URL with a valid PKCE challenge (verified by test against the real workerd runtime).
+- [x] `/api/auth/callback` with a valid code creates a user row, stores tokens in KV, sets a session cookie, redirects to `/`.
+- [x] PKCE verifier auto-expires from KV (TTL set on write).
+- [x] Tests pass; `npm test` green (11/11).
 
 #### Phase 1c — Library sync
 
@@ -334,6 +331,7 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 | 2026-05-11 | All | v1 reference platform swapped from Apple Music to Tidal | Apple Developer account is $99/yr before any code ships; TIDAL developer access is free and the Player SDK is covered by Tidal's 30-day trial for the testing window. TIDAL's API shape (OAuth 2.1 + Player SDK + catalog metadata) is the closest substitute for MusicKit JS, so the Phase-1 skeleton ports cleanly. Apple Music demoted to v2 parallel premium tier (was Tidal's old slot). PRD §1–§8 rewritten; native-client vision pushed from v2 to v3+. |
 | 2026-05-20 | Phase 0, Phase 1 | R2 dropped; library snapshot reconstructed from D1 rows | R2 was an optimization, not a need — D1 already holds library rows after Phase 1's sync, and rebuilding the library blob from `SELECT * FROM library_songs WHERE user_id=?` is cheap at v1 sizes. Dropping R2 avoids the Cloudflare R2-enable flow (payment method required) and removes a service surface. If cold-start taste-profile builds become slow with real data, revisit. |
 | 2026-05-21 | Phase 1 | Phase 1 split into 1a–1d sub-phases (1a shipped) | Phase 1's session budget was 1–2 and flagged as "most likely to spill". Sub-phases are horizontal layers (foundation → auth → sync → UI), not vertical slices — a deliberate exception to §Strategy because the alternative was a single phase that risked context exhaustion mid-implementation. Each sub-phase leaves the worker deployable; user-visible value lands at 1d. |
+| 2026-05-21 | Phase 1b | Added `user.read` scope beyond the 1a note's "collection read + write" | Callback needs `GET /v2/users/me` to obtain the TIDAL user id before writing the D1 `users` row. Alternatives (decode access-token JWT, defer user creation to 1c) traded portal-config friction for schema-FK or token-format fragility. One extra round-trip per login is the smallest cost. |
 
 ---
 
