@@ -199,6 +199,7 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 - `llm.spec.ts` — handles missing key, builds the AI Gateway URL correctly
 - `settings.spec.ts` — BYOK round-trip read/write
 - `promptTemplates.spec.ts` — library summary stays under a token budget
+- `Chat.spec.tsx` (client project) — chat input submit fires `/api/chat`, cards re-render from the response. Phase 1d wired the happy-dom Vitest project; reuse it.
 
 **Done-when:**
 - [ ] User sets a Google AI Studio key in `/settings`.
