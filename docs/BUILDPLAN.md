@@ -1,8 +1,8 @@
 # Build Plan
 
 > **Status:** Draft
-> **Last updated:** 2026-05-21
-> **Current phase:** Phase 1d (React frontend) — 1c shipped 2026-05-21
+> **Last updated:** 2026-05-22
+> **Current phase:** Phase 2 (BYOK LLM + real recommendations) — 1d shipped 2026-05-22
 
 ---
 
@@ -135,39 +135,47 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 - [x] Re-running sync is idempotent.
 - [x] Tests pass (21/21).
 
-#### Phase 1d — React frontend
+#### Phase 1d — React frontend ✅ Done (2026-05-22)
 
-**Goal:** `/login` → "Connect Tidal" → OAuth round-trip → lands on `/` showing tabbed Chat/Library, gear → `/settings`, "Loaded N songs" header, ≥3 placeholder recommendation cards.
+**Goal:** `/login` → "Connect Tidal" → OAuth round-trip → lands on `/` showing tabbed Chat/Library, gear → `/settings`, "Loaded N songs" header, ≥3 placeholder recommendation cards. *Used the static "Loaded N songs" fallback, not the cold-start animation (deferred to Phase 6).*
 
-**Context to load:** DESIGN §2, §3, §4, §5; PRD §4 stories 1+3; `CLAUDE.md`; Phase 1a–1c files. *Use the static "Loaded N songs" fallback, not the cold-start animation (deferred to Phase 6).*
+**Files created/modified:**
+- `musicbot/vite.config.ts` — `outDir: "public"`, `publicDir: false`, plugins `react()` + `tailwindcss()`
+- `musicbot/index.html` — Vite source entry (preconnects Google Fonts, loads Fraunces, mounts `<div id="root">`)
+- `musicbot/src/client/{main,App}.tsx` — React entry + 3-route switch
+- `musicbot/src/client/lib/router.tsx` — tiny pushState-based router (`usePath`, `navigate`, modifier-aware `<Link>`)
+- `musicbot/src/client/lib/api.ts` — cookie-authed fetch wrapper; 401 → `window.location = "/login"`
+- `musicbot/src/client/pages/{Login,Chat,Settings}.tsx`
+- `musicbot/src/client/components/RecommendationCard.tsx` — Heroicons + 44×44 buttons, teal focus rings on stone-900
+- `musicbot/src/client/components/RecommendationCard.spec.tsx` — 4 cases
+- `musicbot/src/client/styles.css` — `@import "tailwindcss"` + `@theme` for Fraunces display font
+- `musicbot/src/client/test-setup.ts` — `jest-dom/vitest` + manual `afterEach(cleanup)`
+- `musicbot/tsconfig.client.json` — extends root, adds DOM lib, resets `exclude`
+- `musicbot/tsconfig.json` — excludes `src/client` (Worker code stays DOM-free)
+- `musicbot/wrangler.jsonc` — `assets.binding: "ASSETS"` + `not_found_handling: "single-page-application"`
+- `musicbot/src/index.ts` — Hono `notFound` proxies non-`/api` to `env.ASSETS.fetch` (the actual mechanism that makes SPA deep-links work; see decision log)
+- `musicbot/vitest.config.mts` (+ `vitest.workers.config.mts`, `vitest.client.config.mts`) — Vitest workspaces (workerd pool + happy-dom)
+- `musicbot/package.json` — added `react`, `react-dom`, `@headlessui/react`, `@heroicons/react`, `vite@^7`, `@vitejs/plugin-react@^5`, `tailwindcss@^4`, `@tailwindcss/vite@^4`, `@types/react@^19`, `@types/react-dom@^19`, `@testing-library/react@^16`, `@testing-library/jest-dom@^6`, `happy-dom@^15`. New scripts: `build`, `dev` (= `vite build && wrangler dev`), `deploy` (= `vite build && wrangler deploy`), `typecheck`.
+- `musicbot/.gitignore` — `public/` (build output)
+- `README.md` — extended TIDAL setup with scopes, prod redirect URI, remote D1 seed; added "Running the app" section
 
-**Files this phase creates/modifies:**
-- `musicbot/vite.config.ts` — Vite build emitting to `public/`
-- `musicbot/src/client/main.tsx` — React entry
-- `musicbot/src/client/App.tsx` — routes (`/login`, `/`, `/settings`)
-- `musicbot/src/client/pages/Login.tsx` — Connect Tidal button
-- `musicbot/src/client/pages/Chat.tsx` — Headless UI `TabGroup`, gear → settings, chat input, cards list, "Loaded N songs" header
-- `musicbot/src/client/components/RecommendationCard.tsx` — placeholder cards with 4 buttons
-- `musicbot/src/client/lib/api.ts` — fetch wrapper using the session cookie
-- `musicbot/public/index.html` — replace scaffold with React mount
-- `musicbot/wrangler.jsonc` — `assets.not_found_handling: "single-page-application"` for client routing
-- Tailwind + Fraunces font + Headless UI + Heroicons setup
-- `README.md` — TIDAL developer-account setup notes
-- `package.json` — `react`, `react-dom`, `@vitejs/plugin-react`, `vite`, `tailwindcss`, `@headlessui/react`, `@heroicons/react`, type packages (approve as a batch when sub-phase starts)
-
-**Tests this phase adds:**
-- `RecommendationCard.spec.tsx` — renders title, artist, art, 4 buttons; basic a11y
+**Notes for future sessions:**
+- **SPA fallback needs the ASSETS binding + a Hono catch-all** — `not_found_handling: "single-page-application"` alone does NOT serve `/index.html` for `/login`/`/settings` when there's a `main` Worker. The Worker is consulted first; Hono's default 404 wins. The fix is the `app.notFound` handler in `src/index.ts` that calls `c.env.ASSETS.fetch(c.req.raw)` for non-`/api/*` paths. `not_found_handling` is what makes that ASSETS.fetch return `/index.html` for unknown paths.
+- **Vite source `index.html` lives at `musicbot/index.html`, not `musicbot/public/index.html`** — Vite expects entry HTML at its `root`. `public/` is the *output*. `publicDir: false` disables Vite's "copy public/ as static assets" semantics so the output dir and the (now-defunct) static-asset dir don't collide.
+- **Vite pinned to v7, plugin-react to v5.** Vitest 3.2.x (already in the repo from Phase 1a) caps its vite dep at `^7.0.0-0`. Bumping Vite to 8 would have required vitest 4, which would have re-opened the Workers-test surface for no real benefit.
+- **Custom router, no `react-router-dom`.** Three routes (`/login`, `/`, `/settings`) don't justify a dep. `lib/router.tsx` is ~30 lines: `usePath` listens to `popstate` + a custom `musicbot:navigate` event; `navigate(to)` calls `pushState` then dispatches; `<Link>` respects modifier-clicks (cmd-click opens new tab).
+- **Vitest workspaces over a single config.** `vitest.config.mts` is now a shell with `test.projects: [workers, client]`. The Workers project keeps the Phase 1a-1c posture (workerd pool, `wrangler.jsonc` binding). The client project adds happy-dom + `@vitejs/plugin-react` and points at `src/client/**/*.spec.{ts,tsx}`. `globals: false` is kept — `@testing-library/react` auto-cleanup is wired explicitly in `test-setup.ts`.
+- **`<img alt="">` is `role="presentation"`, not `role="img"`** — the four RecommendationCard tests use `container.querySelector("img")` for the decorative album art rather than `getByRole("img")`. Bit it on the first test run.
+- **Library auto-syncs on first visit to `/`.** `Chat.tsx` calls `getLibraryCount()` on mount; if `count === 0`, it fires `POST /api/library/sync` and re-renders with the new count. The "Loaded N songs" line uses `aria-live="polite"` so screen readers announce the sync completion (DESIGN §5).
+- **No HMR yet.** `npm run dev` = `vite build && wrangler dev`. The build adds ~500 ms per dev launch; cheap given Phase 1d's scope. Upgrade to a Vite dev server with `/api/*` proxy when frontend iteration speed actually hurts.
+- **End-to-end smoke deferred.** Tests pass (25/25), typecheck clean, `npm run build` produces `public/index.html` + `assets/*` (~75 KB gzipped JS), `wrangler dev` serves `/login`, `/`, `/settings`, `/api/health`, and `/api/library/count` (401 without cookie) correctly. The actual OAuth round-trip against a real TIDAL account was last verified in 1b on 2026-05-21; 1d only adds a `<a href="/api/auth/login">` to that flow. First combined verification will happen the first time Phase 2 wires the chat input to a real LLM call.
 
 **Done-when:**
-- [ ] `/login` shows "Connect Tidal".
-- [ ] OAuth completes and lands on `/`.
-- [ ] `/` shows tabs, gear → `/settings`, "Loaded N songs" line.
-- [ ] ≥3 placeholder cards render.
-- [ ] `npm test` passes; `wrangler deploy` ships a working public URL.
-
-**Session budget:** 1–2.
-
-**Risks / unknowns:** Vite + Workers Assets integration (build output path, dev workflow); SPA fallback on Workers Assets; Tailwind v4-vs-v3 ergonomics.
+- [x] `/login` shows "Connect Tidal".
+- [x] OAuth completes and lands on `/` (path unchanged from 1b; 1d's only new link is the `<a href="/api/auth/login">` in Login.tsx).
+- [x] `/` shows tabs, gear → `/settings`, "Loaded N songs" line.
+- [x] ≥3 placeholder cards render (`PLACEHOLDER_RECS` has 3).
+- [x] `npm test` passes (25/25); `npm run build` clean.
 
 ---
 
@@ -336,6 +344,10 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 | 2026-05-21 | Phase 1b | Added `user.read` scope beyond the 1a note's "collection read + write" | Callback needs `GET /v2/users/me` to obtain the TIDAL user id before writing the D1 `users` row. Alternatives (decode access-token JWT, defer user creation to 1c) traded portal-config friction for schema-FK or token-format fragility. One extra round-trip per login is the smallest cost. |
 | 2026-05-21 | Phase 1c | Used `/userCollectionTracks/me/relationships/items` (current spec) instead of the deprecated `/userCollections/{id}/relationships/tracks` | The OAS marks the latter deprecated and points to the former. The `me` literal resolves to the authenticated user, eliminating a `/users/me` round-trip on every sync. |
 | 2026-05-21 | Phase 1c | Album + album-art left NULL during sync | Pulling them would require `include=items.albums` and album-cover-art lookups, doubling the JSON:API surface. Phase 2 fetches catalog metadata on-demand when rendering recommendation cards, so the data is needed lazily, not eagerly. Revisit if Phase 4's taste-profile builder needs album signals. |
+| 2026-05-22 | Phase 1d | Vite pinned to v7, `@vitejs/plugin-react` to v5 | Vitest 3.2.x — already in the repo from Phase 1a — has a vite dep ceiling of `^7.0.0-0`. Vite 8 would have required vitest 4, which re-opens the Workers-test surface for no real benefit. Pinning is cheap and reversible. |
+| 2026-05-22 | Phase 1d | Tiny custom router instead of `react-router-dom` | Three routes don't justify a dep. `lib/router.tsx` is ~30 lines and respects modifier-clicks. Revisit if the route count grows past ~5 or if nested routing is needed. |
+| 2026-05-22 | Phase 1d | SPA fallback wired via Hono `notFound` + `env.ASSETS.fetch`, not `not_found_handling` alone | Empirically, `not_found_handling: "single-page-application"` does NOT intercept ahead of a `main` Worker — the Worker is consulted first and Hono's 404 wins. The portable fix is to make Hono explicitly proxy non-`/api` 404s to `env.ASSETS.fetch`. `not_found_handling` is what makes that fetch resolve to `/index.html`. Future Workers Assets versions may change this; revisit if the assets/worker precedence becomes configurable. |
+| 2026-05-22 | Phase 1d | Vite source `index.html` at `musicbot/index.html`, `public/` is build output | Vite expects entry HTML at its `root`. `publicDir: false` keeps Vite from also treating the output dir as a static-asset source. Net effect matches the BUILDPLAN intent: built `public/index.html` mounts React. |
 
 ---
 

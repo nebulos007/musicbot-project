@@ -12,8 +12,13 @@
 		"global_fetch_strictly_public"
 	],
 	"assets": {
-		// The path to the directory containing the `index.html` file to be served at `/`
-		"directory": "./public"
+		// Vite emits the built SPA into ./public (see vite.config.ts).
+		// The Hono Worker delegates non-/api requests to `env.ASSETS` (see
+		// src/index.ts catch-all). `single-page-application` is what makes
+		// env.ASSETS.fetch("/login") return /index.html so deep-links work.
+		"directory": "./public",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application"
 	},
 	"observability": {
 		"enabled": true

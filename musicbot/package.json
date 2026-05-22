@@ -3,20 +3,35 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
+    "build": "vite build",
+    "deploy": "vite build && wrangler deploy",
+    "dev": "vite build && wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
     "cf-typegen": "wrangler types"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.4",
+    "@tailwindcss/vite": "^4.3.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^25.6.2",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "happy-dom": "^15.11.7",
+    "tailwindcss": "^4.3.0",
     "typescript": "^5.5.2",
+    "vite": "^7.3.3",
     "vitest": "~3.2.0",
     "wrangler": "^4.90.0"
   },
   "dependencies": {
-    "hono": "^4.12.21"
+    "@headlessui/react": "^2.2.10",
+    "@heroicons/react": "^2.2.0",
+    "hono": "^4.12.21",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   }
 }

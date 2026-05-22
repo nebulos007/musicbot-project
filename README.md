@@ -20,13 +20,30 @@ The app does not ship with a managed LLM. Each user pastes their own Google AI S
 Phase 1 needs TIDAL API credentials. One-time setup before running `wrangler dev`:
 
 1. Sign in to [TIDAL Developer Portal](https://developer.tidal.com/) with a Tidal account that has an active subscription (a fresh 30-day free trial works fine for the v1 build window).
-2. Go to **Dashboard → Create app**. Set the redirect URI to `http://localhost:8787/api/auth/callback` for local dev (add a production URI later when deploying).
-3. Copy the **Client ID** and **Client Secret** into a local `musicbot/.dev.vars` (copy from [`musicbot/.dev.vars.example`](musicbot/.dev.vars.example) — gitignored).
-4. For production, push the same values as Wrangler secrets:
+2. Go to **Dashboard → Create app**. Register **two** redirect URIs:
+   - `http://localhost:8787/api/auth/callback` (local dev)
+   - `https://musicbot.musicbot-cs.workers.dev/api/auth/callback` (production — substitute your own Worker URL)
+3. Allowlist the scopes the app requests: `user.read collection.read collection.write`.
+4. Copy the **Client ID** and **Client Secret** into a local `musicbot/.dev.vars` (copy from [`musicbot/.dev.vars.example`](musicbot/.dev.vars.example) — gitignored).
+5. For production, push the same values as Wrangler secrets:
    ```
    wrangler secret put TIDAL_CLIENT_ID
    wrangler secret put TIDAL_CLIENT_SECRET
    ```
+6. Seed the remote D1 database once before the first production deploy that touches it:
+   ```
+   wrangler d1 execute musicbot --remote --file=src/db/schema.sql
+   ```
+
+### Running the app
+
+From `musicbot/`:
+
+- `npm run dev` — builds the SPA with Vite, then runs `wrangler dev` on `http://localhost:8787`. The single Worker serves the React app at `/` and the API at `/api/*`.
+- `npm run build` — Vite-only build into `musicbot/public/` (Workers Assets serves this).
+- `npm test` — runs both Vitest projects: Worker tests in the workerd runtime and React-component tests in happy-dom.
+- `npm run typecheck` — typechecks `tsconfig.json` (Worker) and `tsconfig.client.json` (React) separately.
+- `npm run deploy` — Vite build + `wrangler deploy`.
 
 ### Cloudflare resources
 
