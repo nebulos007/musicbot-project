@@ -2,7 +2,7 @@
 
 > **Status:** Draft
 > **Last updated:** 2026-05-21
-> **Current phase:** Phase 1c (Library sync) — 1b shipped 2026-05-21
+> **Current phase:** Phase 1d (React frontend) — 1c shipped 2026-05-21
 
 ---
 
@@ -108,30 +108,32 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 - [x] PKCE verifier auto-expires from KV (TTL set on write).
 - [x] Tests pass; `npm test` green (11/11).
 
-#### Phase 1c — Library sync
+#### Phase 1c — Library sync ✅ Done (2026-05-21)
 
 **Goal:** Authenticated user's TIDAL library is fetched (paginated, with 429 backoff) and persisted to D1. `/api/library/count` returns the count.
 
-**Context to load:** PRD §4 story 3, §6, §7; current TIDAL library/collection endpoint docs (pagination shape, rate limits); Phase 1a–1b files.
+**Files created/modified:**
+- `musicbot/src/routes/library.ts` — `POST /api/library/sync`, `GET /api/library/count`, both behind `requireSession()`
+- `musicbot/src/lib/tidal.ts` — added `TIDAL_API_BASE`, `LibrarySong`, `fetchLibraryPage`, `fetchAllLibrary` with `Retry-After`-respecting bounded retry (max 3)
+- `musicbot/src/index.ts` — mounted `libraryRouter` at `/api/library`
+- `musicbot/test/library.spec.ts` — auth gating, multi-page sync, 429 retry, idempotent re-sync, count isolation across users
+- `musicbot/test/tidal.spec.ts` — backoff honors `Retry-After`, defaults to 1s when absent, pagination follows `links.next`
 
-**Files this phase creates/modifies:**
-- `musicbot/src/routes/library.ts` — `POST /api/library/sync`, `GET /api/library/count`
-- `musicbot/src/lib/tidal.ts` — add `fetchLibraryPage`, `fetchAllLibrary` with `Retry-After`-respecting backoff
-- `musicbot/src/index.ts` — mount library routes behind session middleware
-
-**Tests this phase adds:**
-- `library.spec.ts` — sync stores songs in D1; pagination crosses page boundaries; 429 triggers backoff + retry; second sync is idempotent (updates `synced_at`, no dup inserts)
-- `tidal.spec.ts` — backoff respects `Retry-After`
+**Notes for future sessions:**
+- **Endpoint resolved against the live `tidal-api-oas.json` (2026-05-21):** `GET https://openapi.tidal.com/v2/userCollectionTracks/me/relationships/items?include=items,items.artists&countryCode=US&locale=en-US`. The `me` literal is documented in the spec ("Use `me` for the authenticated user's resource"), so we do **not** need the TIDAL user id at fetch time. The older `/userCollections/{id}/relationships/tracks` route is marked deprecated in the spec.
+- **Pagination:** cursor-based. The response's `links.next` is a path **relative to `/v2`** (e.g. `/userCollectionTracks/...?page[cursor]=...`). `fetchLibraryPage` prepends `TIDAL_API_BASE` only if the path doesn't already start with `http`. Tests assume the same shape.
+- **JSON:API parsing:** track titles come from the `tracks` resource in `included[]` (keyed by `tracks:<id>`); artist names come from the first id in `track.relationships.artists.data` resolved against `artists:<id>` in the same `included[]`. Album / album-art are intentionally `NULL` in 1c — Phase 2 fills them when displaying recs.
+- **Idempotency:** `INSERT … ON CONFLICT(user_id, song_id) DO UPDATE SET title, artist, added_at, synced_at = excluded.*`. The PK already exists in the 1a schema, so no migration. The idempotency test sleeps 1.1s between syncs because `synced_at` is INTEGER seconds — a faster re-run could land in the same second and look like no-op.
+- **429 backoff:** `parseRetryAfter` honors numeric seconds and HTTP-date forms; falls back to 1s when missing. Capped at 3 retries per page. Tests inject a fake `sleep` so they don't actually wait.
+- **Mocking gotcha:** undici's MockClient normalizes (sorts) query params, so `path:` matchers must be regexes over the pathname only — literal strings with a query won't match. Use FIFO interceptors when two requests share a pathname (e.g. paginated calls).
+- **Subrequest limits not yet stress-tested.** A free-plan Worker caps at 50 subrequests per request; a 1000-song library at the TIDAL default 20-per-page would need 50 calls. If real libraries breach this, the BUILDPLAN risk flagged (Queues / cursor resumption) becomes Phase 1c.1.
+- **Manual end-to-end verification deferred** — phase shipped on tests only. Will be exercised the first time Phase 1d's UI hits `POST /api/library/sync`. Remote D1 still has not been seeded (1a note still applies).
 
 **Done-when:**
-- [ ] Sync paginates the full library and writes to D1.
-- [ ] `GET /api/library/count` returns the correct count.
-- [ ] Re-running sync is idempotent.
-- [ ] Tests pass.
-
-**Session budget:** 1.
-
-**Risks / unknowns:** TIDAL pagination shape + rate limits (PRD §6 flags as Phase-1 discovery); Worker subrequest limits on large libraries (may need staged sync via Queues or cursor resumption — surface if it bites).
+- [x] Sync paginates the full library and writes to D1.
+- [x] `GET /api/library/count` returns the correct count.
+- [x] Re-running sync is idempotent.
+- [x] Tests pass (21/21).
 
 #### Phase 1d — React frontend
 
@@ -332,6 +334,8 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 | 2026-05-20 | Phase 0, Phase 1 | R2 dropped; library snapshot reconstructed from D1 rows | R2 was an optimization, not a need — D1 already holds library rows after Phase 1's sync, and rebuilding the library blob from `SELECT * FROM library_songs WHERE user_id=?` is cheap at v1 sizes. Dropping R2 avoids the Cloudflare R2-enable flow (payment method required) and removes a service surface. If cold-start taste-profile builds become slow with real data, revisit. |
 | 2026-05-21 | Phase 1 | Phase 1 split into 1a–1d sub-phases (1a shipped) | Phase 1's session budget was 1–2 and flagged as "most likely to spill". Sub-phases are horizontal layers (foundation → auth → sync → UI), not vertical slices — a deliberate exception to §Strategy because the alternative was a single phase that risked context exhaustion mid-implementation. Each sub-phase leaves the worker deployable; user-visible value lands at 1d. |
 | 2026-05-21 | Phase 1b | Added `user.read` scope beyond the 1a note's "collection read + write" | Callback needs `GET /v2/users/me` to obtain the TIDAL user id before writing the D1 `users` row. Alternatives (decode access-token JWT, defer user creation to 1c) traded portal-config friction for schema-FK or token-format fragility. One extra round-trip per login is the smallest cost. |
+| 2026-05-21 | Phase 1c | Used `/userCollectionTracks/me/relationships/items` (current spec) instead of the deprecated `/userCollections/{id}/relationships/tracks` | The OAS marks the latter deprecated and points to the former. The `me` literal resolves to the authenticated user, eliminating a `/users/me` round-trip on every sync. |
+| 2026-05-21 | Phase 1c | Album + album-art left NULL during sync | Pulling them would require `include=items.albums` and album-cover-art lookups, doubling the JSON:API surface. Phase 2 fetches catalog metadata on-demand when rendering recommendation cards, so the data is needed lazily, not eagerly. Revisit if Phase 4's taste-profile builder needs album signals. |
 
 ---
 

@@ -1,6 +1,7 @@
 export const TIDAL_AUTHORIZE_URL = "https://login.tidal.com/authorize";
 export const TIDAL_TOKEN_URL = "https://auth.tidal.com/v1/oauth2/token";
 export const TIDAL_ME_URL = "https://openapi.tidal.com/v2/users/me";
+export const TIDAL_API_BASE = "https://openapi.tidal.com/v2";
 export const TIDAL_SCOPES = "user.read collection.read collection.write";
 
 const REFRESH_LEEWAY_SECONDS = 60;
@@ -155,4 +156,146 @@ export async function refreshIfNeeded(
 	});
 	await env.SESSIONS.put(tokensKvKey(userId), JSON.stringify(fresh));
 	return fresh.accessToken;
+}
+
+// --- Library sync ---------------------------------------------------------
+
+export type LibrarySong = {
+	songId: string;
+	title: string;
+	artist: string;
+	addedAt: number;
+};
+
+type RawIncluded = {
+	type: string;
+	id: string;
+	attributes?: Record<string, unknown>;
+	relationships?: Record<string, { data?: Array<{ type: string; id: string }> }>;
+};
+
+type RawLibraryPage = {
+	data?: Array<{
+		id: string;
+		type: string;
+		meta?: { addedAt?: string };
+	}>;
+	included?: RawIncluded[];
+	links?: { next?: string };
+};
+
+export type LibraryPage = {
+	songs: LibrarySong[];
+	nextPath: string | null;
+};
+
+const LIBRARY_COLLECTION_PATH =
+	"/userCollectionTracks/me/relationships/items?include=items,items.artists&countryCode=US&locale=en-US";
+const MAX_RETRIES = 3;
+const DEFAULT_BACKOFF_SECONDS = 1;
+
+export type FetchLibraryOpts = {
+	accessToken: string;
+	sleep?: (seconds: number) => Promise<void>;
+	now?: () => number;
+};
+
+function defaultSleep(seconds: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+}
+
+function indexIncluded(
+	included: RawIncluded[] | undefined,
+): Map<string, RawIncluded> {
+	const m = new Map<string, RawIncluded>();
+	for (const r of included ?? []) m.set(`${r.type}:${r.id}`, r);
+	return m;
+}
+
+function isoToEpochSeconds(iso: string | undefined, fallback: number): number {
+	if (!iso) return fallback;
+	const t = Date.parse(iso);
+	return Number.isNaN(t) ? fallback : Math.floor(t / 1000);
+}
+
+function parsePage(json: RawLibraryPage, nowSeconds: number): LibraryPage {
+	const included = indexIncluded(json.included);
+	const songs: LibrarySong[] = [];
+	for (const item of json.data ?? []) {
+		const track = included.get(`tracks:${item.id}`);
+		if (!track) continue;
+		const title =
+			typeof track.attributes?.title === "string"
+				? (track.attributes.title as string)
+				: null;
+		if (!title) continue;
+		const artistRel = track.relationships?.artists?.data ?? [];
+		const firstArtistId = artistRel[0]?.id;
+		const artist = firstArtistId
+			? ((included.get(`artists:${firstArtistId}`)?.attributes?.name as
+					| string
+					| undefined) ?? "Unknown Artist")
+			: "Unknown Artist";
+		songs.push({
+			songId: item.id,
+			title,
+			artist,
+			addedAt: isoToEpochSeconds(item.meta?.addedAt, nowSeconds),
+		});
+	}
+	return { songs, nextPath: json.links?.next ?? null };
+}
+
+function parseRetryAfter(header: string | null): number {
+	if (!header) return DEFAULT_BACKOFF_SECONDS;
+	const n = Number(header);
+	if (Number.isFinite(n) && n >= 0) return n;
+	const epochMs = Date.parse(header);
+	if (Number.isNaN(epochMs)) return DEFAULT_BACKOFF_SECONDS;
+	const delta = Math.ceil((epochMs - Date.now()) / 1000);
+	return Math.max(delta, 0);
+}
+
+export async function fetchLibraryPage(
+	path: string,
+	opts: FetchLibraryOpts,
+): Promise<LibraryPage> {
+	const url = path.startsWith("http") ? path : `${TIDAL_API_BASE}${path}`;
+	const sleep = opts.sleep ?? defaultSleep;
+	const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
+	let attempt = 0;
+	for (;;) {
+		const res = await fetch(url, {
+			headers: {
+				authorization: `Bearer ${opts.accessToken}`,
+				accept: "application/vnd.api+json",
+			},
+		});
+		if (res.status === 429 && attempt < MAX_RETRIES) {
+			const wait = parseRetryAfter(res.headers.get("retry-after"));
+			await sleep(wait);
+			attempt++;
+			continue;
+		}
+		if (!res.ok) {
+			throw new Error(
+				`TIDAL library fetch failed: ${res.status} ${await res.text()}`,
+			);
+		}
+		const json = (await res.json()) as RawLibraryPage;
+		return parsePage(json, now());
+	}
+}
+
+export async function fetchAllLibrary(
+	opts: FetchLibraryOpts,
+): Promise<LibrarySong[]> {
+	const all: LibrarySong[] = [];
+	let path: string | null = LIBRARY_COLLECTION_PATH;
+	while (path) {
+		const page: LibraryPage = await fetchLibraryPage(path, opts);
+		all.push(...page.songs);
+		path = page.nextPath;
+	}
+	return all;
 }
