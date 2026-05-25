@@ -274,30 +274,37 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 
 ---
 
-### Phase 5 — Library tab (recommendation history)
+### Phase 5 — Library tab (TIDAL library browse + recommendation history)
 
-**Goal:** Users see past recommendations with their ratings in the Library tab. Maps to PRD §4 story #4 (Should-have).
+**Goal:** Two-section Library tab: (1) **My library** — paginated browse of the user's synced TIDAL library with working play buttons; (2) **History** — past recommendations with the ratings the user gave. Maps to PRD §4 story #4 (Should-have) and the soft goal in PRD §3 of "users listen *inside* our app" as a taste-signal capture surface. Depends on Phase 3's Player SDK + `play` helper and Phase 2's TIDAL catalog-lookup helper (for album-art enrichment — Phase 1c left `album` / `album_art_url` NULL).
 
-**Context to load:** PRD §4 story 4; DESIGN §2 (Library tab), §6 (1/2/3-col grid); Phase 1a–1d + Phase 3 files.
+**Context to load:** PRD §3 (in-app listening as signal capture), §4 story 4; DESIGN §2 (Library tab), §6 (1/2/3-col grid); Phase 1a–1d + Phase 2 + Phase 3 files.
 
 **Files this phase creates/modifies:**
-- `musicbot/src/routes/history.ts` — paginated history (newest first)
-- `musicbot/src/client/pages/Chat.tsx` — wire the Library tab
+- `musicbot/src/routes/library.ts` — add `GET /api/library/songs?cursor=...&limit=...` (paginated, newest-first by `added_at`)
+- `musicbot/src/routes/history.ts` — paginated rec history (newest first)
+- `musicbot/src/lib/tidal.ts` — `enrichSongs(songIds)` for album / album-art backfill on demand (reuse Phase 2's catalog-lookup helper)
+- `musicbot/src/client/pages/Chat.tsx` — wire the Library tab to render the two sub-sections
+- `musicbot/src/client/components/LibrarySongRow.tsx` — compact row with art, title, artist, play button (reuses Phase 3's play wiring)
+- `musicbot/src/client/components/HistoryGrid.tsx` — responsive 1/2/3-col grid for past recs
 - `musicbot/src/client/components/RecommendationCard.tsx` — read-only "history" variant showing the rating given
-- `musicbot/src/client/components/HistoryGrid.tsx` — responsive 1/2/3-col
 
 **Tests this phase adds:**
+- `library.spec.ts` — extend with `/api/library/songs` pagination + ordering by `added_at`
 - `history.spec.ts` — paginated, includes feedback, newest first
+- `LibrarySongRow.spec.tsx` (client project) — renders title/artist/art, play button has accessible label
 - `HistoryGrid.spec.tsx` — column count correct at `md` + `lg`
 
 **Done-when:**
-- [ ] Library tab shows past recs newest-first, with the rating the user gave.
-- [ ] Responsive: 1 col phone, 2 col tablet, 3 col desktop.
+- [ ] Library tab shows the synced TIDAL library, paginated, with album art enriched on demand.
+- [ ] Each library row has a Play button that triggers the Player SDK (the same `play` helper rec cards use).
+- [ ] Library tab also shows past recs newest-first, with the rating the user gave.
+- [ ] Responsive: 1 col phone, 2 col tablet, 3 col desktop for the history grid; library rows stack on phone, wider on tablet+.
 - [ ] Tests pass; deployed.
 
-**Session budget:** 1.
+**Session budget:** 1–2.
 
-**Risks / unknowns:** low.
+**Risks / unknowns:** Catalog-lookup batch size + 429 behavior when enriching a large library (carries forward Phase 1c's subrequest-cap concern); two-section layout on a 390px viewport without crowding the chat-input affordance.
 
 ---
 
@@ -349,6 +356,8 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 | 2026-05-22 | Phase 1d | Tiny custom router instead of `react-router-dom` | Three routes don't justify a dep. `lib/router.tsx` is ~30 lines and respects modifier-clicks. Revisit if the route count grows past ~5 or if nested routing is needed. |
 | 2026-05-22 | Phase 1d | SPA fallback wired via Hono `notFound` + `env.ASSETS.fetch`, not `not_found_handling` alone | Empirically, `not_found_handling: "single-page-application"` does NOT intercept ahead of a `main` Worker — the Worker is consulted first and Hono's 404 wins. The portable fix is to make Hono explicitly proxy non-`/api` 404s to `env.ASSETS.fetch`. `not_found_handling` is what makes that fetch resolve to `/index.html`. Future Workers Assets versions may change this; revisit if the assets/worker precedence becomes configurable. |
 | 2026-05-22 | Phase 1d | Vite source `index.html` at `musicbot/index.html`, `public/` is build output | Vite expects entry HTML at its `root`. `publicDir: false` keeps Vite from also treating the output dir as a static-asset source. Net effect matches the BUILDPLAN intent: built `public/index.html` mounts React. |
+| 2026-05-25 | Phase 1d | Dropped `not_found_handling: "single-page-application"` from `wrangler.jsonc` (supersedes the 2026-05-22 entry on the same topic) | Earlier same-week reasoning was wrong. When `Sec-Fetch-Mode: navigate` is set (i.e., any browser top-level navigation), Workers Assets's SPA fallback intercepts *ahead* of the Worker — so navigating to `/api/auth/login` returned `/index.html` instead of the OAuth redirect, breaking Connect TIDAL. Fix: drop the flag; the Hono `notFound` catch-all explicitly fetches `/index.html` via `env.ASSETS.fetch` for non-`/api` paths. Caught during the first manual end-to-end smoke after 1d shipped. |
+| 2026-05-25 | Phase 5 | Library tab grew from "rec history only" to "TIDAL library browse + history" | User wants to find songs to play directly in the app, not just review past recs. The browse view sits on top of Phase 1c's synced `library_songs` rows and reuses Phase 3's `play` helper + Phase 2's catalog-lookup helper for album-art enrichment — no new dependencies. Session budget bumped 1 → 1–2. Aligns with PRD §3's "users listen *inside* our app" soft goal as a taste-signal capture surface. |
 
 ---
 

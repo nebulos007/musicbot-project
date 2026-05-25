@@ -13,12 +13,12 @@
 	],
 	"assets": {
 		// Vite emits the built SPA into ./public (see vite.config.ts).
-		// The Hono Worker delegates non-/api requests to `env.ASSETS` (see
-		// src/index.ts catch-all). `single-page-application` is what makes
-		// env.ASSETS.fetch("/login") return /index.html so deep-links work.
+		// SPA fallback is handled by the Hono Worker (`app.notFound` in
+		// src/index.ts), NOT by `not_found_handling` — the latter intercepts
+		// browser navigations (Sec-Fetch-Mode: navigate) ahead of the Worker
+		// and would hijack OAuth redirects like /api/auth/login.
 		"directory": "./public",
-		"binding": "ASSETS",
-		"not_found_handling": "single-page-application"
+		"binding": "ASSETS"
 	},
 	"observability": {
 		"enabled": true
