@@ -7,5 +7,8 @@ declare namespace Cloudflare {
 	interface Env {
 		TIDAL_CLIENT_ID: string;
 		TIDAL_CLIENT_SECRET: string;
+		// AI Gateway authentication token (cf-aig-authorization). Optional: only
+		// needed when the gateway is configured as an Authenticated Gateway.
+		AI_GATEWAY_TOKEN?: string;
 	}
 }

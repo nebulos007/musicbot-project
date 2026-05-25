@@ -38,9 +38,8 @@
 		}
 	],
 	"vars": {
-		// AI Gateway base URL. Create a gateway in the Cloudflare dashboard
-		// (AI → AI Gateway → Create Gateway) and replace REPLACE_ME with its slug.
-		// The worker appends provider paths (e.g. /google-ai-studio/v1beta/...) at call time.
-		"AI_GATEWAY_BASE_URL": "https://gateway.ai.cloudflare.com/v1/5f0bf65365c8f6d076dbe0060a0810a1/REPLACE_ME"
+		// AI Gateway base URL — ends at the gateway slug ("musicbot"). The worker
+		// appends the provider path (/google-ai-studio/v1/models/...) at call time.
+		"AI_GATEWAY_BASE_URL": "https://gateway.ai.cloudflare.com/v1/5f0bf65365c8f6d076dbe0060a0810a1/musicbot"
 	}
 }

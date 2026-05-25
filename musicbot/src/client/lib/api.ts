@@ -22,3 +22,56 @@ export async function syncLibrary(): Promise<number> {
 	const json = (await res.json()) as { synced: number };
 	return json.synced;
 }
+
+export type ChatRecommendation = {
+	id: string;
+	title: string;
+	artist: string;
+	album?: string;
+	albumArtUrl?: string;
+};
+
+export type ChatResponse = {
+	reply: string;
+	recommendations: ChatRecommendation[];
+};
+
+// Thrown when the user hasn't saved a BYOK key yet — the chat surfaces this as
+// a prompt to open Settings rather than a generic error.
+export class NoApiKeyError extends Error {
+	constructor() {
+		super("no_api_key");
+		this.name = "NoApiKeyError";
+	}
+}
+
+export async function sendChat(prompt: string): Promise<ChatResponse> {
+	const res = await apiFetch("/api/chat", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ prompt }),
+	});
+	if (!res.ok) {
+		const body = (await res.json().catch(() => ({}))) as { error?: string };
+		if (body.error === "no_api_key") throw new NoApiKeyError();
+		throw new Error(`chat failed: ${body.error ?? res.status}`);
+	}
+	return (await res.json()) as ChatResponse;
+}
+
+export type SettingsStatus = { hasKey: boolean; tidalConnected: boolean };
+
+export async function getSettings(): Promise<SettingsStatus> {
+	const res = await apiFetch("/api/settings");
+	if (!res.ok) throw new Error(`settings failed: ${res.status}`);
+	return (await res.json()) as SettingsStatus;
+}
+
+export async function saveApiKey(key: string): Promise<void> {
+	const res = await apiFetch("/api/settings", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ key }),
+	});
+	if (!res.ok) throw new Error(`save key failed: ${res.status}`);
+}

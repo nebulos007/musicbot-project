@@ -6,3 +6,8 @@
 # Create an app at https://developer.tidal.com/dashboard, then paste here.
 TIDAL_CLIENT_ID=your_tidal_client_id_here
 TIDAL_CLIENT_SECRET=your_tidal_client_secret_here
+
+# AI Gateway authentication token (Phase 2). Only needed when the gateway is an
+# Authenticated Gateway. Create a token in the Cloudflare dashboard:
+# AI → AI Gateway → musicbot → Settings → Authentication. Omit for an open gateway.
+AI_GATEWAY_TOKEN=your_ai_gateway_token_here

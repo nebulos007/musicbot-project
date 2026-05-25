@@ -9,6 +9,7 @@ export type Recommendation = {
 	id: string;
 	title: string;
 	artist: string;
+	album?: string;
 	albumArtUrl?: string;
 };
 

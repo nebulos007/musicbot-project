@@ -16,6 +16,7 @@ export type TidalTokens = {
 
 export const tokensKvKey = (userId: string) => `tidal_tokens:${userId}`;
 export const pkceKvKey = (state: string) => `pkce:${state}`;
+export const byokKvKey = (userId: string) => `byok_key:${userId}`;
 
 function base64UrlEncode(bytes: Uint8Array): string {
 	let s = "";
@@ -298,4 +299,108 @@ export async function fetchAllLibrary(
 		path = page.nextPath;
 	}
 	return all;
+}
+
+// --- Catalog search --------------------------------------------------------
+// Resolves the LLM's free-text "title artist" guess to a real TIDAL track so a
+// recommendation card has a canonical title/artist, album art, and a track id
+// (the id Phase 3 needs to play/add). Phase 5 reuses this for album-art
+// backfill of the synced library.
+
+export type CatalogTrack = {
+	tidalId: string;
+	title: string;
+	artist: string;
+	album: string | null;
+	albumArtUrl: string | null;
+};
+
+// The cover-art chain is track → albums → coverArt(artworks) → files[].href, so
+// we pull all three relationships in one call. countryCode is required by the API.
+const SEARCH_INCLUDE = "tracks,tracks.albums,tracks.albums.coverArt,tracks.artists";
+// Cover art comes in several sizes; pick the smallest that's still crisp on a card.
+const MIN_COVER_WIDTH = 320;
+
+type RawArtworkFile = { href?: string; meta?: { width?: number } };
+
+// A JSON:API relationship's `data` is an array for to-many and a bare object
+// for to-one (e.g. an album's single coverArt). Handle both.
+function relFirstId(rel: { data?: unknown } | undefined): string | undefined {
+	const data = rel?.data;
+	if (Array.isArray(data)) return (data[0] as { id?: string } | undefined)?.id;
+	if (data && typeof data === "object") return (data as { id?: string }).id;
+	return undefined;
+}
+
+function pickArtwork(files: RawArtworkFile[] | undefined): string | null {
+	const withHref = (files ?? []).filter(
+		(f): f is RawArtworkFile & { href: string } => typeof f.href === "string",
+	);
+	if (withHref.length === 0) return null;
+	const bySize = [...withHref].sort(
+		(a, b) => (a.meta?.width ?? 0) - (b.meta?.width ?? 0),
+	);
+	const mid = bySize.find((f) => (f.meta?.width ?? 0) >= MIN_COVER_WIDTH);
+	return (mid ?? bySize[bySize.length - 1]).href;
+}
+
+export async function searchTrack(
+	query: string,
+	accessToken: string,
+	countryCode = "US",
+): Promise<CatalogTrack | null> {
+	const url =
+		`${TIDAL_API_BASE}/searchResults/${encodeURIComponent(query)}` +
+		`?countryCode=${countryCode}&include=${encodeURIComponent(SEARCH_INCLUDE)}`;
+
+	let res: Response;
+	try {
+		res = await fetch(url, {
+			headers: {
+				authorization: `Bearer ${accessToken}`,
+				accept: "application/vnd.api+json",
+			},
+		});
+	} catch {
+		return null; // network blip — degrade to no-art rather than fail the chat
+	}
+	if (!res.ok) return null;
+
+	const json = (await res.json()) as {
+		data?: { relationships?: { tracks?: { data?: Array<{ id: string }> } } };
+		included?: RawIncluded[];
+	};
+
+	const firstTrackId = json.data?.relationships?.tracks?.data?.[0]?.id;
+	if (!firstTrackId) return null;
+
+	const included = indexIncluded(json.included);
+	const track = included.get(`tracks:${firstTrackId}`);
+	const title =
+		typeof track?.attributes?.title === "string"
+			? (track.attributes.title as string)
+			: null;
+	if (!track || !title) return null;
+
+	const artistId = relFirstId(track.relationships?.artists);
+	const artist = artistId
+		? ((included.get(`artists:${artistId}`)?.attributes?.name as
+				| string
+				| undefined) ?? "Unknown Artist")
+		: "Unknown Artist";
+
+	const albumId = relFirstId(track.relationships?.albums);
+	const album = albumId ? included.get(`albums:${albumId}`) : undefined;
+	const albumTitle =
+		typeof album?.attributes?.title === "string"
+			? (album.attributes.title as string)
+			: null;
+
+	const coverArtId = relFirstId(album?.relationships?.coverArt);
+	const cover = coverArtId ? included.get(`artworks:${coverArtId}`) : undefined;
+	const albumArtUrl = pickArtwork(
+		cover?.attributes?.files as RawArtworkFile[] | undefined,
+	);
+
+	return { tidalId: firstTrackId, title, artist, album: albumTitle, albumArtUrl };
 }

@@ -1,8 +1,8 @@
 # Build Plan
 
 > **Status:** Draft
-> **Last updated:** 2026-05-22
-> **Current phase:** Phase 2 (BYOK LLM + real recommendations) — 1d shipped 2026-05-22
+> **Last updated:** 2026-05-25
+> **Current phase:** Phase 3 (act on a recommendation) — Phase 2 shipped 2026-05-25 (tests/build only; live deploy pending AI Gateway slug + a real key)
 
 ---
 
@@ -185,31 +185,37 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 
 **Context to load:** PRD §4 story 1, §6 (AI Gateway, BYOK); DESIGN §3 (chat bubble — *no streaming yet*), §6 (chat width on desktop); `CLAUDE.md`; Phase 1a–1d files.
 
-**Files this phase creates/modifies:**
-- `musicbot/src/routes/chat.ts` — POST `/api/chat` (prompt → LLM → JSON recs)
-- `musicbot/src/lib/llm.ts` — Gemini (Google AI Studio) call via AI Gateway
-- `musicbot/src/lib/promptTemplates.ts` — prompt construction with a *summary* of the library (not the whole library)
-- `musicbot/src/routes/settings.ts` — KV-backed BYOK key storage
-- `musicbot/src/client/pages/Settings.tsx` — visible-label BYOK input + Tidal auth status
-- `musicbot/src/client/pages/Chat.tsx` — wire input → `/api/chat` → cards
-- `musicbot/src/client/lib/api.ts` — fetch wrapper with session header
+**Files created/modified (actuals, 2026-05-25):**
+- `musicbot/src/lib/llm.ts` — `GEMINI_MODEL` (`gemini-2.5-flash`), `buildGatewayUrl`, `generateRecommendations` (structured-JSON Gemini call via AI Gateway)
+- `musicbot/src/lib/promptTemplates.ts` — `summarizeLibrary` (count + top-40 artists, capped at `MAX_SUMMARY_CHARS`), `buildRecommendationPrompt`
+- `musicbot/src/lib/tidal.ts` — `searchTrack` (catalog lookup → canonical title/artist/album/art + track id) and `byokKvKey`
+- `musicbot/src/routes/chat.ts` — `POST /api/chat` (key check → library summary → LLM → catalog enrichment, capped at 5 recs)
+- `musicbot/src/routes/settings.ts` — `GET`/`POST /api/settings` (KV-backed BYOK key; status is write-only)
+- `musicbot/src/index.ts` — mounted `chatRouter` + `settingsRouter`
+- `musicbot/src/client/lib/api.ts` — `sendChat`, `getSettings`, `saveApiKey`, `NoApiKeyError`
+- `musicbot/src/client/pages/Chat.tsx` — controlled input, message thread, real recs replace placeholders
+- `musicbot/src/client/pages/Settings.tsx` — visible-label BYOK form + TIDAL status
+- `musicbot/src/client/components/RecommendationCard.tsx` — `Recommendation` gained optional `album`
+- Tests: `test/{llm,promptTemplates,settings,chat}.spec.ts`, `src/client/pages/Chat.spec.tsx`
 
-**Tests this phase adds:**
-- `chat.spec.ts` — given a prompt + mocked LLM, returns structured rec JSON
-- `llm.spec.ts` — handles missing key, builds the AI Gateway URL correctly
-- `settings.spec.ts` — BYOK round-trip read/write
-- `promptTemplates.spec.ts` — library summary stays under a token budget
-- `Chat.spec.tsx` (client project) — chat input submit fires `/api/chat`, cards re-render from the response. Phase 1d wired the happy-dom Vitest project; reuse it.
+**Notes for future sessions:**
+- **AI Gateway → Gemini path:** `{AI_GATEWAY_BASE_URL}/google-ai-studio/v1beta/models/gemini-2.5-flash:generateContent`, Google key in the `x-goog-api-key` header. **Must be `/v1beta`, not `/v1`** — the stable `/v1` `GenerationConfig` rejects `responseMimeType`/`responseSchema` as unknown fields (confirmed on the first live call 2026-05-25; CF's doc example showing `/v1` is misleading for structured output). `AI_GATEWAY_BASE_URL` is a `wrangler.jsonc` var (in the generated `Env` after `wrangler types`); its slug is now `musicbot` (set 2026-05-25).
+- **Authenticated gateway:** the gateway runs in Authenticated mode, so each call also sends `cf-aig-authorization: Bearer <AI_GATEWAY_TOKEN>`. `AI_GATEWAY_TOKEN` is a `.dev.vars` / `wrangler secret` secret (typed optional in `env.d.ts`); `generateRecommendations` adds the header only when the token is present, so an open gateway and the tests still work without it. A `.dev.vars` change needs a `wrangler dev` restart to take effect.
+- **BYOK key lives in the `SESSIONS` KV namespace** under `byok_key:<userId>` (alongside `tidal_tokens:` / `pkce:`). `GET /api/settings` returns only `{ hasKey, tidalConnected }`, never the raw key.
+- **Catalog lookup (verified against live `tidal-api-oas.json` 2026-05-25):** `GET /v2/searchResults/{query}?countryCode=US&include=tracks,tracks.albums,tracks.albums.coverArt,tracks.artists`. Takes the first `data.relationships.tracks.data[]` id, resolves it through `included[]` (reuses Phase 1c's `indexIncluded`). **Cover art is to-one** so `album.relationships.coverArt.data` is a bare object, not an array — `relFirstId` handles both. `searchTrack` degrades to `null` (card shows LLM text, no art) on any non-2xx / no-hit / missing nested include, so a catalog miss never fails the chat. This is the helper Phase 5 reuses for library album-art backfill.
+- **Single-shot chat (confirmed with PRD owner):** each `/api/chat` is independent — library summary + that one prompt. The visible thread lives only in `Chat.tsx` React state; nothing is persisted and prior turns aren't sent to the LLM. Recommendation persistence/history is Phase 4/5.
+- **Chat bubbles use `rounded-2xl`, not DESIGN §4's literal `rounded-full`** — `rounded-full` clips multi-line replies into a pill. `rounded-2xl` is the iMessage-style radius the brief actually means. No `ChatBubble.tsx` component yet (that file is Phase 6); bubbles are inline in `Chat.tsx`.
+- **Manual end-to-end + deploy deferred** (same posture as 1c/1d): all 46 tests green, typecheck clean, `vite build` clean (~76 KB gzipped JS), both external calls mocked. First real run needs the user to (1) create an AI Gateway and replace `REPLACE_ME` in `wrangler.jsonc`, (2) paste a Google AI Studio key in `/settings`.
 
 **Done-when:**
-- [ ] User sets a Google AI Studio key in `/settings`.
-- [ ] Typing "something like Phoebe Bridgers but more upbeat" updates the cards with real recs (title, artist, album art via TIDAL catalog lookup).
-- [ ] Reply lands as a single message — no streaming.
-- [ ] Tests pass; deployed.
+- [x] User sets a Google AI Studio key in `/settings` (BYOK form → `POST /api/settings`; round-trip tested).
+- [x] A prompt updates the cards with real recs (title, artist, album art via TIDAL catalog lookup) — covered by `chat.spec.ts` + `Chat.spec.tsx`; live run pending the two prerequisites above.
+- [x] Reply lands as a single message — no streaming.
+- [x] Tests pass (46/46). **Deploy pending** AI Gateway slug + real key.
 
 **Session budget:** 1–2.
 
-**Risks / unknowns:** Prompt quality before any feedback exists (PRD §7 cold-start risk); TIDAL catalog lookup for free-text artist/song names returned by the LLM; AI Gateway BYOK semantics.
+**Risks / unknowns:** Prompt quality before any feedback exists (PRD §7 cold-start risk) — untested until a live key runs. 3-level nested include (`tracks.albums.coverArt`) may not be honored by TIDAL; `searchTrack` degrades gracefully if so — confirm on first real call.
 
 ---
 
@@ -358,6 +364,9 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 | 2026-05-22 | Phase 1d | Vite source `index.html` at `musicbot/index.html`, `public/` is build output | Vite expects entry HTML at its `root`. `publicDir: false` keeps Vite from also treating the output dir as a static-asset source. Net effect matches the BUILDPLAN intent: built `public/index.html` mounts React. |
 | 2026-05-25 | Phase 1d | Dropped `not_found_handling: "single-page-application"` from `wrangler.jsonc` (supersedes the 2026-05-22 entry on the same topic) | Earlier same-week reasoning was wrong. When `Sec-Fetch-Mode: navigate` is set (i.e., any browser top-level navigation), Workers Assets's SPA fallback intercepts *ahead* of the Worker — so navigating to `/api/auth/login` returned `/index.html` instead of the OAuth redirect, breaking Connect TIDAL. Fix: drop the flag; the Hono `notFound` catch-all explicitly fetches `/index.html` via `env.ASSETS.fetch` for non-`/api` paths. Caught during the first manual end-to-end smoke after 1d shipped. |
 | 2026-05-25 | Phase 5 | Library tab grew from "rec history only" to "TIDAL library browse + history" | User wants to find songs to play directly in the app, not just review past recs. The browse view sits on top of Phase 1c's synced `library_songs` rows and reuses Phase 3's `play` helper + Phase 2's catalog-lookup helper for album-art enrichment — no new dependencies. Session budget bumped 1 → 1–2. Aligns with PRD §3's "users listen *inside* our app" soft goal as a taste-signal capture surface. |
+| 2026-05-25 | Phase 2 | Single-shot chat, not multi-turn | Confirmed with PRD owner. Each `/api/chat` sends only the library summary + the current prompt; the thread is client-side React state, unpersisted. Matches the Phase 2 done-when and keeps the API contract small; recommendation history/persistence is where Phase 4/5 already put it. Revisit if follow-up prompts ("more upbeat than those") become a felt need. |
+| 2026-05-25 | Phase 2 | Default model `gemini-2.5-flash` | Cloudflare's own AI Gateway example model; fast, cheap, free-tier friendly. Kept as a one-line `GEMINI_MODEL` constant in `llm.ts` so swapping is trivial. |
+| 2026-05-25 | Phase 2 | Catalog lookup added to `tidal.ts` (`searchTrack`), beyond the §Phase-2 file list | The done-when requires album art "via TIDAL catalog lookup", and Phase 5 already references "Phase 2's catalog-lookup helper". Resolving each LLM rec against `/searchResults` also yields the canonical TIDAL track id Phase 3 needs to play/add — so the lookup does double duty. Capped at 5 recs (≤ ~7 subrequests) and degrades to no-art on any miss rather than failing the chat. |
 
 ---
 

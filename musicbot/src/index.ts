@@ -1,12 +1,16 @@
 import { Hono } from "hono";
 import { authRouter } from "./routes/auth";
+import { chatRouter } from "./routes/chat";
 import { libraryRouter } from "./routes/library";
+import { settingsRouter } from "./routes/settings";
 
 const app = new Hono<{ Bindings: Env }>();
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
 app.route("/api/auth", authRouter);
 app.route("/api/library", libraryRouter);
+app.route("/api/chat", chatRouter);
+app.route("/api/settings", settingsRouter);
 
 // SPA fallback. Anything not handled by the API routes above and not a real
 // asset is the React app — serve /index.html so the client router can pick up
