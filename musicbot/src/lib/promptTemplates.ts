@@ -8,8 +8,13 @@
 
 import type { TasteProfile } from "./tasteProfile";
 
-export const MAX_SUMMARY_CHARS = 3000;
-const TOP_ARTISTS = 40;
+// These two are coupled: each "Artist (n)" entry is ~20 chars, so the char cap
+// is the real ceiling on how many artists reach the model. Raising TOP_ARTISTS
+// without raising the cap just truncates the list mid-way. 150 artists gives the
+// LLM enough breadth to infer genre/era clusters (see system prompt) while
+// staying trivially cheap on the user's BYOK token budget.
+export const MAX_SUMMARY_CHARS = 6000;
+const TOP_ARTISTS = 150;
 
 export type LibrarySongLite = { title: string; artist: string };
 
@@ -79,6 +84,10 @@ export function buildRecommendationPrompt(params: {
 		`You are a knowledgeable music recommender inside a TIDAL discovery app. ` +
 		`Given a summary of the user's library and a request, suggest exactly ${params.count} songs that fit the request. ` +
 		`Favor artists or songs the user does not already appear to have. ` +
+		`From the library summary, infer the genres, scenes, and eras (by decade) the user gravitates toward ` +
+		`and the threads that connect their artists. Use those patterns when you recommend: match the dominant ` +
+		`genres and eras for open-ended requests, and deliberately stretch along one axis — an adjacent scene, ` +
+		`an earlier influence, or a contemporary descendant — when the request asks for something like an artist but different. ` +
 		`Respond only as JSON matching the provided schema: a short, friendly "reply" (one or two sentences) ` +
 		`and a "recommendations" array of objects with "title" and "artist".`;
 

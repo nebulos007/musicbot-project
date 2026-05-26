@@ -17,6 +17,17 @@ describe("summarizeLibrary", () => {
 		expect(summary).toContain("5000 songs");
 	});
 
+	it("lists artists well past the old 40-artist cap", () => {
+		// 50 distinct artists, one song each → alpha order. The 46th (A45) would
+		// have been cut under the old TOP_ARTISTS = 40; it must show now.
+		const songs = Array.from({ length: 50 }, (_, i) => ({
+			title: "x",
+			artist: `Artist A${String(i).padStart(2, "0")}`,
+		}));
+		const summary = summarizeLibrary(songs);
+		expect(summary).toContain("Artist A45");
+	});
+
 	it("surfaces the most-collected artist first, with its count", () => {
 		const songs = [
 			...Array.from({ length: 10 }, () => ({
@@ -46,6 +57,17 @@ describe("buildRecommendationPrompt", () => {
 		expect(system).toContain("5");
 		expect(user).toContain("SUMMARY_MARKER");
 		expect(user).toContain("more upbeat");
+	});
+
+	it("instructs the model to reason about genre and era, even cold-start", () => {
+		const { system } = buildRecommendationPrompt({
+			librarySummary: "SUMMARY",
+			userPrompt: "anything",
+			count: 5,
+		});
+		expect(system).toContain("genres");
+		expect(system).toContain("eras");
+		expect(system).toContain("stretch along one axis");
 	});
 
 	it("injects loved/disliked taste signals when a profile has signal", () => {
