@@ -316,6 +316,26 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 
 **Risks / unknowns:** Cold-start quality without play counts (PRD §7 — needs to be tested early); over-fitting to a single dislike; profile drift if an event is mis-clicked. **Live before/after re-score still pending** — the real proof of Phase 4 is re-running the gut-check prompts on prod and beating the baseline's `Discovery 1` on "like X but different".
 
+#### Phase 4 validation protocol (live before/after gut-check)
+
+The owner runs this against prod (it needs a real TIDAL login, the BYOK key, and subjective scoring — not automatable). See the cold-start baseline in auto-memory `project-coldstart-rec-baseline` for the "before" scores.
+
+**Live data check (2026-05-26, before any validation run):** 436 songs synced; 25 feedback events (18 like, 7 add, **0 dislike**) but only **4 carry `title`/`artist`** — the other ~21 are pre-migration Phase-3 events with NULL artist that contribute nothing. The 2 `taste_profile_snapshots` written so far are both **empty** (`{lovedArtists:[],dislikedArtists:[],dislikedTracks:[]}`) because those 4 enriched likes were clicked *after* the last chat ran. So no warm pass has happened yet; the plumbing (snapshot-per-chat) is confirmed working.
+
+**Three states to compare, not two** — the wider summary + genre/era clause means cold-start *today* already differs from the original memory baseline:
+
+| State | Prompt contents |
+|---|---|
+| Original baseline (memory; scored `Discovery 1` on "like X but different") | top-40 artists only |
+| Cold-start today (empty profile) | 150 artists + genre/era reasoning clause |
+| Warm (after feedback) | 150 artists + genre/era clause + populated taste profile |
+
+**Steps:**
+1. **Pass A — cold-start (profile currently empty):** run the three baseline prompts, score Fit / Discovery / Grounded / Gets-me (1–5): (1) "moody late-night drive"; (2) "like [top artist] but more upbeat"; (3) "an artist I probably haven't heard".
+2. **Build a profile:** give **~10 feedbacks across rec cards, including several dislikes** (currently zero — the "like X but different" lift leans on dislikes-as-exclusions), spread across distinct artists for breadth.
+3. **Pass B — warm:** re-run the same three prompts, score again.
+4. **Verify the objective half:** `SELECT profile_json FROM taste_profile_snapshots ORDER BY id DESC LIMIT 1` (or the AI Gateway log) should show the warm prompt carried the loved/disliked artists. Compare Pass B vs Pass A vs the memory baseline; success = Discovery/Gets-me on "like X but different" beats the baseline `1`.
+
 ---
 
 ### Phase 5 — Library tab (TIDAL library browse + recommendation history)
