@@ -61,7 +61,7 @@ On subsequent sessions, skip straight to the chat — the animation is a one-tim
 - **Custom components** (Headless UI doesn't cover):
   - **Recommendation card** — album art, title/artist, action buttons (play / add-to-library / like / dislike). Just a styled `div` with Heroicons + tactile button feedback.
   - **Chat bubble + streaming reply** — message list, user vs. assistant bubbles, streaming-text animation, send button.
-  - **Audio player controls** — play/pause/skip + scrubber. TIDAL Player SDK provides behavior; we build the visuals. Kept minimal per PRD §3 (we are not competing with Tidal's player).
+  - **Audio player controls** — client-grade: play/pause, skip, scrubber, a queue built from recommendations, repeat/shuffle, surfaced in a **persistent mini-player bar** that stays visible and keeps playing across the Chat/Library tabs and routes (the Spotify / Apple-Music bottom-bar pattern). TIDAL Player SDK provides behavior; we build the visuals. The player **mounts once at the app root**, not inside a tab/route, so audio is never interrupted. Watch the 390px phone case: the mini-player and the Chat tab's bottom-pinned input compete for bottom space — stack or collapse them deliberately (see §6). _(Revised 2026-05-26 — playback is now a first-class feature; see PRD §3.)_
   - **Cold-start library animation** — first-session-only "this knows your library" moment (see §2 hero screen).
   - **Taste-avatar visualization** — deferred (user story #6, "could-have"). Likely SVG/canvas. Out of scope for v1.
 

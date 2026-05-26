@@ -26,7 +26,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 - **Deferred on purpose:**
   - **Cold-start library animation** → Phase 6. DESIGN §7 flags it as the highest-risk piece of motion work. Phase 1 ships a static "Loaded N songs" message instead.
   - **Chat-streaming "iMessage feel"** → Phase 6, optional. PRD owner has explicitly said this is not a v1 concern.
-  - **In-app playback (TIDAL Player SDK)** → **Phase 3.5** (still v1). Split out of Phase 3 because it's the PRD §7 flagged biggest risk, needs a new dependency (`@tidal-music/player`) + an active subscription, and Phase 4's taste profile depends on the *feedback events*, not on playback. Phase 3 ships a "Listen on TIDAL" deep link in the meantime.
+  - **In-app playback (TIDAL Player SDK)** → **Phase 3.5** (still v1, now a **first-class, client-grade player** — revised 2026-05-26). Sequenced *after* Phase 4 (the week-4 demo feature) but ahead of the final demo if time allows. Split out of Phase 3 because it's the PRD §7 flagged biggest risk, needs a new dependency (`@tidal-music/player`) + an active subscription, and Phase 4's taste profile depends on the *feedback events*, not on playback. Phase 3 ships a "Listen on TIDAL" deep link in the meantime.
   - **Playlist building (story #5)** and **taste-avatar (story #6)** → not in this plan. Decision-log them if they come back.
 - **`/clear` between phases.** Every phase boundary is a hint to clear context. Each phase's "Context to load" line is the *only* thing the next session should pull in.
 
@@ -260,25 +260,28 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 
 ### Phase 3.5 — In-app playback (TIDAL Player SDK)
 
-**Goal:** Replace the "Listen on TIDAL" deep link with real in-app playback so listening becomes a captured taste signal (PRD §3 soft goal). Minimal controls per DESIGN §3 — not a competitor to Tidal's player.
+**Goal:** Real, **client-grade** in-app playback users actually enjoy — replaces the "Listen on TIDAL" deep link. Play/pause, skip, scrubber, a queue built from the recommendation list, repeat/shuffle. Audio plays uninterrupted in the background as the user moves between the Chat/Library tabs and routes. Also captures listen signal (full plays, early skips, repeats) for the taste profile. (Playback is a **first-class v1 feature** as of 2026-05-26 — see decision log; PRD §3 / DESIGN §3 revised.)
 
-**Context to load:** PRD §3 (in-app listening as signal), §6 (Player SDK limits); DESIGN §3 (audio player controls), §5; Phase 3 files.
+**Context to load:** PRD §3 (in-app playback as a first-class feature), §6 (Player SDK limits); DESIGN §3 (audio player controls); Phase 3 + Phase 5 files (Library `play` wiring).
 
 **Files this phase creates/modifies (planned):**
-- `musicbot/package.json` — add `@tidal-music/player` (+ auth handoff dep if needed) — **ask before adding**
-- `musicbot/src/client/lib/player.ts` — SDK init + a `play(songId)` that replaces `tidalTrackUrl`'s role
-- `musicbot/src/client/components/RecommendationCard.tsx` — Play button drives the SDK instead of the deep link
-- in-app session events → `feedback_events` (or a new table) for full-play/skip signal
+- `musicbot/package.json` — `@tidal-music/player` (+ any auth-handoff dep) — **ask before adding**
+- `musicbot/src/client/lib/player.ts` — SDK init + a player store/hook: current track, queue, position, `play`/`pause`/`seek`/`next`/`prev`/`toggleRepeat`/`toggleShuffle`; token handoff from the Worker-held OAuth tokens
+- `musicbot/src/client/components/Player.tsx` — **persistent mini-player bar** (now-playing + controls), **mounted once at the app root** (above the router/tabs) so it stays visible and audio survives tab/route changes. Mind the 390px clash with the Chat tab's bottom-pinned input (DESIGN §6).
+- `musicbot/src/client/components/RecommendationCard.tsx` + `LibrarySongRow.tsx` — Play enqueues/plays via the store instead of the deep link
+- listen-signal capture → `feedback_events` or a new `listen_events` table (full-play / early-skip / repeat)
+- a small backend surface (route or KV) only if the SDK needs server-mediated credentials
 
 **Done-when:**
-- [ ] Play starts in-app playback for a subscribed account; minimal controls.
-- [ ] Falls back gracefully (deep link) when the account has no active subscription.
-- [ ] In-app listen signal captured for Phase 4.
+- [ ] Play starts real in-app playback on a subscribed account; play/pause, skip, scrubber, queue, repeat/shuffle all work.
+- [ ] A persistent mini-player bar stays visible with working controls across Chat/Library tab + route switches, and audio never interrupts (player lives at the app root).
+- [ ] Graceful fallback (deep link or preview) when the account has no active subscription.
+- [ ] In-app listen signal captured for the taste profile (Phase 4 can consume it).
 - [ ] Tests pass; deployed.
 
-**Session budget:** 1–2.
+**Session budget:** 2–3 (bumped from 1–2 — full controls + queue + SDK auth handoff; PRD §7's flagged biggest risk).
 
-**Risks / unknowns:** PRD §7's flagged biggest risk. Subscription requirement for full-track playback; SDK auth handoff from the Workers-held OAuth tokens; skip detection precision (PRD §6).
+**Risks / unknowns:** PRD §7's biggest risk. SDK auth handoff from Worker-held OAuth tokens to the browser; subscription gating for full-track playback (preview / deep-link fallback otherwise); queue + playback state management; skip-detection precision (PRD §6, ~1–2s). **Out of scope even here:** catalog/search browsing — we build a player, not a Tidal replacement.
 
 ---
 
@@ -399,6 +402,7 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 | 2026-05-25 | Phase 2 | Single-shot chat, not multi-turn | Confirmed with PRD owner. Each `/api/chat` sends only the library summary + the current prompt; the thread is client-side React state, unpersisted. Matches the Phase 2 done-when and keeps the API contract small; recommendation history/persistence is where Phase 4/5 already put it. Revisit if follow-up prompts ("more upbeat than those") become a felt need. |
 | 2026-05-25 | Phase 2 | Default model `gemini-2.5-flash` | Cloudflare's own AI Gateway example model; fast, cheap, free-tier friendly. Kept as a one-line `GEMINI_MODEL` constant in `llm.ts` so swapping is trivial. |
 | 2026-05-25 | Phase 2 | Catalog lookup added to `tidal.ts` (`searchTrack`), beyond the §Phase-2 file list | The done-when requires album art "via TIDAL catalog lookup", and Phase 5 already references "Phase 2's catalog-lookup helper". Resolving each LLM rec against `/searchResults` also yields the canonical TIDAL track id Phase 3 needs to play/add — so the lookup does double duty. Capped at 5 recs (≤ ~7 subrequests) and degrades to no-art on any miss rather than failing the chat. |
+| 2026-05-26 | PRD §3, DESIGN §3, Phase 3.5 | Reversed the "minimal player / not a music client / signal-only" stance — in-app playback promoted to a **first-class, client-grade** v1 feature | Owner overrode the PRD: enjoying music directly in the app matters, not just capturing signal. Phase 3.5 expanded to play/pause/skip/scrubber + queue (from recs) + repeat/shuffle; audio persists across in-app tab/route changes by mounting the player at the app root, surfaced in a **persistent mini-player bar** that stays visible across tabs/routes. Sequencing unchanged — Phase 4 (taste profile / week-4 demo feature) still goes first, 3.5 follows. Catalog/search browsing stays out of scope: we build a player, not a Tidal replacement. PRD §3 + DESIGN §3 rewritten; Phase 3.5 session budget bumped 1–2 → 2–3. |
 | 2026-05-26 | Phase 3, Phase 3.5 | Real Player SDK split out of Phase 3 into a new **Phase 3.5**; Phase 3 ships Play as a "Listen on TIDAL" deep link | The Player SDK is PRD §7's flagged biggest risk, needs a new dependency (`@tidal-music/player`) + an active subscription, and bundling it into the feedback phase would balloon a tidy 1-session slice. Phase 4's taste profile depends on the *feedback events*, not playback. Confirmed with the owner that in-app playback stays in v1. The deep link is functional now (no dead demo button), brand-compliant (DESIGN §1), and `tidalTrackUrl` is a one-line swap for the SDK later. Phase 5's "Player SDK" references repointed at 3.5. |
 | 2026-05-26 | Phase 3 | Add-to-library verified live: `POST /userCollectionTracks/me/relationships/items` *does* support track writes | Pre-implementation the GitHub discussion #90 suggested only albums/artists/playlists were writable. Checking the current `tidal-api-oas.json` showed POST + DELETE on the tracks-items relationship, so the discussion is stale. Endpoint + JSON:API body recorded in the Phase 3 notes. POST-against-`me` (vs a real collection id) is the one piece still unconfirmed live. |
 | 2026-05-26 | Phase 3 | `feedback_events` is an append-only log; like/dislike post only on activation | Simplest shape for Phase 4's aggregation (latest-signal-per-song) and matches "events written" in the done-when. No "unlike" event — toggle-off is visual-only. `add` writes only after the TIDAL add succeeds (a recorded `add` implies the library write happened). |
