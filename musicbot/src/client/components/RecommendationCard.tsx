@@ -1,9 +1,16 @@
 import {
+	CheckIcon,
+	HandThumbDownIcon,
+	HandThumbUpIcon,
 	PlayIcon,
 	PlusIcon,
-	HandThumbUpIcon,
-	HandThumbDownIcon,
 } from "@heroicons/react/24/outline";
+import {
+	HandThumbDownIcon as HandThumbDownSolidIcon,
+	HandThumbUpIcon as HandThumbUpSolidIcon,
+} from "@heroicons/react/24/solid";
+import { useState } from "react";
+import { type FeedbackKind, tidalTrackUrl } from "../lib/api";
 
 export type Recommendation = {
 	id: string;
@@ -15,13 +22,44 @@ export type Recommendation = {
 
 type Props = {
 	rec: Recommendation;
+	onAction?: (kind: FeedbackKind, rec: Recommendation) => void | Promise<void>;
 };
 
-// 44px tap target floor (DESIGN §5, §7 — phone-grade ergonomics).
+// 44px tap target floor (DESIGN §5, §7). `transition` + motion-safe scale gives
+// the tactile press feedback (DESIGN §1) while honoring prefers-reduced-motion.
 const buttonBase =
-	"flex h-11 w-11 items-center justify-center rounded-xl border border-stone-700 bg-stone-800 text-stone-100 transition-colors hover:bg-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-900";
+	"flex h-11 w-11 items-center justify-center rounded-xl border border-stone-700 bg-stone-800 text-stone-100 transition hover:bg-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-900 motion-safe:active:scale-95 disabled:opacity-40 disabled:hover:bg-stone-800";
 
-export function RecommendationCard({ rec }: Props) {
+// Filled state for like/dislike/added — a class change the tests can assert.
+// The icon also swaps outline→solid (or +→✓) so color is never the only signal.
+const activeButton = "border-teal-500 text-teal-400";
+
+export function RecommendationCard({ rec, onAction }: Props) {
+	// Only real TIDAL tracks are actionable. Their ids are numeric strings;
+	// placeholders ("p1") and catalog misses ("llm:0") aren't, so there's
+	// nothing to play, add, or meaningfully rate — disable the actions.
+	const resolved = /^\d+$/.test(rec.id);
+	const [feedback, setFeedback] = useState<"like" | "dislike" | null>(null);
+	const [added, setAdded] = useState(false);
+
+	// like/dislike are mutually exclusive; clicking the active one clears it. We
+	// POST only on activation (no "unlike" event) — the append-only log lets
+	// Phase 4 take the latest signal per song.
+	function toggle(kind: "like" | "dislike") {
+		const next = feedback === kind ? null : kind;
+		setFeedback(next);
+		if (next) void onAction?.(kind, rec);
+	}
+
+	function add() {
+		if (added) return;
+		setAdded(true); // optimistic; revert if the server rejects the add
+		Promise.resolve(onAction?.("add", rec)).catch(() => setAdded(false));
+	}
+
+	const liked = feedback === "like";
+	const disliked = feedback === "dislike";
+
 	return (
 		<article
 			aria-label={`${rec.title} by ${rec.artist}`}
@@ -46,21 +84,66 @@ export function RecommendationCard({ rec }: Props) {
 				<p className="truncate text-sm text-stone-400">{rec.artist}</p>
 			</div>
 			<div className="flex flex-none gap-2">
-				<button type="button" aria-label="Play" className={buttonBase}>
-					<PlayIcon className="h-5 w-5" aria-hidden="true" />
+				{resolved ? (
+					<a
+						href={tidalTrackUrl(rec.id)}
+						target="_blank"
+						rel="noopener noreferrer"
+						aria-label="Play"
+						className={buttonBase}
+					>
+						<PlayIcon className="h-5 w-5" aria-hidden="true" />
+					</a>
+				) : (
+					<button
+						type="button"
+						aria-label="Play"
+						disabled
+						className={buttonBase}
+					>
+						<PlayIcon className="h-5 w-5" aria-hidden="true" />
+					</button>
+				)}
+				<button
+					type="button"
+					aria-label={added ? "Added to library" : "Add to library"}
+					disabled={!resolved}
+					onClick={add}
+					className={`${buttonBase}${added ? ` ${activeButton}` : ""}`}
+				>
+					{added ? (
+						<CheckIcon className="h-5 w-5" aria-hidden="true" />
+					) : (
+						<PlusIcon className="h-5 w-5" aria-hidden="true" />
+					)}
 				</button>
 				<button
 					type="button"
-					aria-label="Add to library"
-					className={buttonBase}
+					aria-label="Like"
+					aria-pressed={liked}
+					disabled={!resolved}
+					onClick={() => toggle("like")}
+					className={`${buttonBase}${liked ? ` ${activeButton}` : ""}`}
 				>
-					<PlusIcon className="h-5 w-5" aria-hidden="true" />
+					{liked ? (
+						<HandThumbUpSolidIcon className="h-5 w-5" aria-hidden="true" />
+					) : (
+						<HandThumbUpIcon className="h-5 w-5" aria-hidden="true" />
+					)}
 				</button>
-				<button type="button" aria-label="Like" className={buttonBase}>
-					<HandThumbUpIcon className="h-5 w-5" aria-hidden="true" />
-				</button>
-				<button type="button" aria-label="Dislike" className={buttonBase}>
-					<HandThumbDownIcon className="h-5 w-5" aria-hidden="true" />
+				<button
+					type="button"
+					aria-label="Dislike"
+					aria-pressed={disliked}
+					disabled={!resolved}
+					onClick={() => toggle("dislike")}
+					className={`${buttonBase}${disliked ? ` ${activeButton}` : ""}`}
+				>
+					{disliked ? (
+						<HandThumbDownSolidIcon className="h-5 w-5" aria-hidden="true" />
+					) : (
+						<HandThumbDownIcon className="h-5 w-5" aria-hidden="true" />
+					)}
 				</button>
 			</div>
 		</article>

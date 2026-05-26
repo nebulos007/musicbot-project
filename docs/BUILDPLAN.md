@@ -1,8 +1,8 @@
 # Build Plan
 
 > **Status:** Draft
-> **Last updated:** 2026-05-25
-> **Current phase:** Phase 3 (act on a recommendation) — Phase 2 shipped 2026-05-25 (tests/build only; live deploy pending AI Gateway slug + a real key)
+> **Last updated:** 2026-05-26
+> **Current phase:** Phase 4 (taste profile that learns) — Phase 3 shipped **and deployed** 2026-05-26 to https://musicbot.musicbot-cs.workers.dev (remote D1 migrated; AI Gateway slug + Google BYOK key set; prod secrets pushed; OAuth + add-to-collection verified live). Real in-app playback (TIDAL Player SDK) is carved into **Phase 3.5**; Phase 3 ships Play as a "Listen on TIDAL" deep link.
 
 ---
 
@@ -26,6 +26,7 @@ That way each phase fits in a focused session — no full-repo loads, no thrashi
 - **Deferred on purpose:**
   - **Cold-start library animation** → Phase 6. DESIGN §7 flags it as the highest-risk piece of motion work. Phase 1 ships a static "Loaded N songs" message instead.
   - **Chat-streaming "iMessage feel"** → Phase 6, optional. PRD owner has explicitly said this is not a v1 concern.
+  - **In-app playback (TIDAL Player SDK)** → **Phase 3.5** (still v1). Split out of Phase 3 because it's the PRD §7 flagged biggest risk, needs a new dependency (`@tidal-music/player`) + an active subscription, and Phase 4's taste profile depends on the *feedback events*, not on playback. Phase 3 ships a "Listen on TIDAL" deep link in the meantime.
   - **Playlist building (story #5)** and **taste-avatar (story #6)** → not in this plan. Decision-log them if they come back.
 - **`/clear` between phases.** Every phase boundary is a hint to clear context. Each phase's "Context to load" line is the *only* thing the next session should pull in.
 
@@ -225,28 +226,59 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 
 **Context to load:** PRD §4 stories 2+3; DESIGN §3 (card), §5 (a11y — color + icon, 44px tap targets); Phase 1a–1d + Phase 2 files.
 
-**Files this phase creates/modifies:**
-- `musicbot/src/db/schema.sql` — add `feedback_events` (`user_id`, `song_id`, `kind`, `created_at`)
-- `musicbot/src/routes/feedback.ts` — POST `/api/feedback` for like/dislike/add
-- `musicbot/src/lib/tidal.ts` — `addToLibrary`, `play` helpers
-- `musicbot/src/client/components/RecommendationCard.tsx` — wire 4 buttons + fill-state change + tactile press feedback (CSS only — respect `prefers-reduced-motion`)
-- `musicbot/src/client/lib/api.ts` — feedback POST helpers
+**Files created/modified (actuals, 2026-05-26):**
+- `musicbot/src/db/schema.sql` — added append-only `feedback_events` (`id`, `user_id`, `song_id`, `kind`, `created_at`) + `idx_feedback_user`
+- `musicbot/src/lib/tidal.ts` — `addToLibrary(trackId, {accessToken, sleep?})`: JSON:API POST with 429 backoff (reuses `parseRetryAfter`/`MAX_RETRIES`), 409→success
+- `musicbot/src/routes/feedback.ts` — `POST /api/feedback` behind `requireSession`; like/dislike write events, `add` calls `addToLibrary` first then writes
+- `musicbot/src/index.ts` — mounted `feedbackRouter` at `/api/feedback`
+- `musicbot/src/client/lib/api.ts` — `sendFeedback(songId, kind)`, `tidalTrackUrl(id)` (deep-link helper Phase 5 reuses)
+- `musicbot/src/client/components/RecommendationCard.tsx` — interactive: Play `<a>` deep link, like/dislike toggle (outline→solid icon + teal fill + `aria-pressed`), add (Plus→Check, "Added to library"), `motion-safe:active:scale-95`, actions disabled for unresolved recs
+- `musicbot/src/client/pages/Chat.tsx` — passes `onAction={(kind) => sendFeedback(rec.id, kind)}`
+- Tests: `test/{feedback,tidal-add}.spec.ts`, extended `src/client/components/RecommendationCard.spec.tsx`
 
-**Tests this phase adds:**
-- `feedback.spec.ts` — events written with `user_id`, `song_id`, `kind`, timestamp
-- `RecommendationCard.spec.tsx` — buttons call correct handlers, fill-state change is a class change (verifiable), 44px target via computed style
-- `tidal-add.spec.ts` — `addToLibrary` handles auth refresh + 429
+**Notes for future sessions:**
+- **Play is a "Listen on TIDAL" deep link, not the Player SDK.** Real in-app playback is **Phase 3.5** (see decision log 2026-05-26). `tidalTrackUrl(id)` → `https://listen.tidal.com/track/{id}`, opened in a new tab. Phase 5's library rows reuse this helper until 3.5 swaps it for the SDK.
+- **Add-to-library endpoint verified against the live `tidal-api-oas.json` (2026-05-26):** `POST /v2/userCollectionTracks/me/relationships/items?countryCode=US`, `content-type: application/vnd.api+json`, body `{ "data": [ { "type": "tracks", "id": "<id>" } ] }` (1–20 items). The GitHub discussion #90 ("only albums/artists/playlists writable") is **stale** — the current spec has POST/DELETE on the tracks relationship. `me` is the documented authenticated-user literal (same as Phase 1c's GET), and a POST against `me` is **confirmed working live (2026-05-26)** — clicking a rec card's + added the track to the real TIDAL collection. `409` is treated as success (already in collection); an optional `Idempotency-Key` header exists but we don't send one (internal 429 retries re-send the same idempotent body).
+- **`feedback_events` is an append-only log** (`id INTEGER PRIMARY KEY AUTOINCREMENT`). like/dislike are mutually exclusive in the UI and post **only on activation** — deactivation/toggle-off is visual-only (no "unlike" event). Phase 4 takes the latest signal per (user, song). No CHECK constraint on `kind`; the route validates `{like,dislike,add}` (matches the rest of the schema's no-CHECK style).
+- **`add` ordering:** the route calls `addToLibrary` *before* inserting the event, so a recorded `add` always implies the TIDAL write succeeded; on failure it returns 502 and writes nothing, and the card optimistically-then-reverts the "added" fill. like/dislike write directly (no side effect).
+- **Actionable = numeric id.** The card gates Play/Add/Like/Dislike on `/^\d+$/.test(rec.id)` — real TIDAL track ids are numeric, while placeholders (`p1`) and catalog misses (`llm:0`) aren't, so those render with the actions disabled (and no live Play link). This is why the pre-existing card tests (id `test-1`) still pass: Play falls back to a disabled `<button>`, still role=button name="Play".
+- **44px assertion is a class check, not computed style.** Tailwind isn't compiled in the happy-dom unit run, so the test asserts each control carries `h-11 w-11` (the 44px contract) rather than reading `getComputedStyle`.
+- **Deployed 2026-05-26** to https://musicbot.musicbot-cs.workers.dev. 66/66 tests green, typecheck clean. Remote D1 migrated via `wrangler d1 execute musicbot --remote --file=src/db/schema.sql` (idempotent — created `feedback_events` plus the never-seeded earlier tables; 4 tables now present). AI Gateway slug in `wrangler.jsonc`, Google BYOK key in KV via `/settings`. Post-deploy smoke: `/api/health` 200, `POST /api/feedback` 401 without a session (route mounted + gated). Prod secrets (`TIDAL_CLIENT_ID`/`_SECRET`, `AI_GATEWAY_TOKEN`) were missing on the first deploy — pushed via `wrangler secret put` (they only lived in `.dev.vars`); the empty `client_id` was the cause of TIDAL's generic "1005" error. **Confirmed live 2026-05-26:** full OAuth round-trip + clicking a rec card's + added the track to the real TIDAL collection (POST-against-`me` works).
 
 **Done-when:**
-- [ ] All four buttons functional, ≥44px on a 390px viewport.
-- [ ] Like / dislike change icon **and** fill (not color alone — DESIGN §5).
-- [ ] Add-to-library adds the song to the user's Tidal library.
-- [ ] Feedback events visible in D1.
-- [ ] Tests pass; deployed.
+- [x] All four buttons functional, ≥44px on a 390px viewport (`h-11 w-11`).
+- [x] Like / dislike change icon **and** fill (outline→solid + teal `aria-pressed`, not color alone — DESIGN §5).
+- [x] Add-to-library calls the verified TIDAL collection-add endpoint (live POST-to-`me` confirmation pending).
+- [x] Feedback events written to D1 (`feedback.spec.ts`).
+- [x] Tests pass (66/66); deployed to https://musicbot.musicbot-cs.workers.dev (remote D1 migrated). Add's POST-to-`me` confirmed live — track added to a real TIDAL collection.
 
 **Session budget:** 1.
 
-**Risks / unknowns:** TIDAL `addToLibrary` scope / errors; tap-target tuning without a real iPhone in hand (DESIGN §7).
+**Risks / unknowns:** POST-to-`me` for collection add unconfirmed live (fallback: real collection id); tap-target tuning without a real iPhone in hand (DESIGN §7).
+
+---
+
+### Phase 3.5 — In-app playback (TIDAL Player SDK)
+
+**Goal:** Replace the "Listen on TIDAL" deep link with real in-app playback so listening becomes a captured taste signal (PRD §3 soft goal). Minimal controls per DESIGN §3 — not a competitor to Tidal's player.
+
+**Context to load:** PRD §3 (in-app listening as signal), §6 (Player SDK limits); DESIGN §3 (audio player controls), §5; Phase 3 files.
+
+**Files this phase creates/modifies (planned):**
+- `musicbot/package.json` — add `@tidal-music/player` (+ auth handoff dep if needed) — **ask before adding**
+- `musicbot/src/client/lib/player.ts` — SDK init + a `play(songId)` that replaces `tidalTrackUrl`'s role
+- `musicbot/src/client/components/RecommendationCard.tsx` — Play button drives the SDK instead of the deep link
+- in-app session events → `feedback_events` (or a new table) for full-play/skip signal
+
+**Done-when:**
+- [ ] Play starts in-app playback for a subscribed account; minimal controls.
+- [ ] Falls back gracefully (deep link) when the account has no active subscription.
+- [ ] In-app listen signal captured for Phase 4.
+- [ ] Tests pass; deployed.
+
+**Session budget:** 1–2.
+
+**Risks / unknowns:** PRD §7's flagged biggest risk. Subscription requirement for full-track playback; SDK auth handoff from the Workers-held OAuth tokens; skip detection precision (PRD §6).
 
 ---
 
@@ -282,7 +314,7 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 
 ### Phase 5 — Library tab (TIDAL library browse + recommendation history)
 
-**Goal:** Two-section Library tab: (1) **My library** — paginated browse of the user's synced TIDAL library with working play buttons; (2) **History** — past recommendations with the ratings the user gave. Maps to PRD §4 story #4 (Should-have) and the soft goal in PRD §3 of "users listen *inside* our app" as a taste-signal capture surface. Depends on Phase 3's Player SDK + `play` helper and Phase 2's TIDAL catalog-lookup helper (for album-art enrichment — Phase 1c left `album` / `album_art_url` NULL).
+**Goal:** Two-section Library tab: (1) **My library** — paginated browse of the user's synced TIDAL library with working play buttons; (2) **History** — past recommendations with the ratings the user gave. Maps to PRD §4 story #4 (Should-have) and the soft goal in PRD §3 of "users listen *inside* our app" as a taste-signal capture surface. Uses Phase 3's `tidalTrackUrl` deep-link for Play (upgrades to the **Phase 3.5** Player SDK if that's landed by then) and Phase 2's TIDAL catalog-lookup helper (for album-art enrichment — Phase 1c left `album` / `album_art_url` NULL).
 
 **Context to load:** PRD §3 (in-app listening as signal capture), §4 story 4; DESIGN §2 (Library tab), §6 (1/2/3-col grid); Phase 1a–1d + Phase 2 + Phase 3 files.
 
@@ -303,7 +335,7 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 
 **Done-when:**
 - [ ] Library tab shows the synced TIDAL library, paginated, with album art enriched on demand.
-- [ ] Each library row has a Play button that triggers the Player SDK (the same `play` helper rec cards use).
+- [ ] Each library row has a Play button (same helper rec cards use — `tidalTrackUrl` deep link, or the Phase 3.5 Player SDK if landed).
 - [ ] Library tab also shows past recs newest-first, with the rating the user gave.
 - [ ] Responsive: 1 col phone, 2 col tablet, 3 col desktop for the history grid; library rows stack on phone, wider on tablet+.
 - [ ] Tests pass; deployed.
@@ -367,6 +399,9 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 | 2026-05-25 | Phase 2 | Single-shot chat, not multi-turn | Confirmed with PRD owner. Each `/api/chat` sends only the library summary + the current prompt; the thread is client-side React state, unpersisted. Matches the Phase 2 done-when and keeps the API contract small; recommendation history/persistence is where Phase 4/5 already put it. Revisit if follow-up prompts ("more upbeat than those") become a felt need. |
 | 2026-05-25 | Phase 2 | Default model `gemini-2.5-flash` | Cloudflare's own AI Gateway example model; fast, cheap, free-tier friendly. Kept as a one-line `GEMINI_MODEL` constant in `llm.ts` so swapping is trivial. |
 | 2026-05-25 | Phase 2 | Catalog lookup added to `tidal.ts` (`searchTrack`), beyond the §Phase-2 file list | The done-when requires album art "via TIDAL catalog lookup", and Phase 5 already references "Phase 2's catalog-lookup helper". Resolving each LLM rec against `/searchResults` also yields the canonical TIDAL track id Phase 3 needs to play/add — so the lookup does double duty. Capped at 5 recs (≤ ~7 subrequests) and degrades to no-art on any miss rather than failing the chat. |
+| 2026-05-26 | Phase 3, Phase 3.5 | Real Player SDK split out of Phase 3 into a new **Phase 3.5**; Phase 3 ships Play as a "Listen on TIDAL" deep link | The Player SDK is PRD §7's flagged biggest risk, needs a new dependency (`@tidal-music/player`) + an active subscription, and bundling it into the feedback phase would balloon a tidy 1-session slice. Phase 4's taste profile depends on the *feedback events*, not playback. Confirmed with the owner that in-app playback stays in v1. The deep link is functional now (no dead demo button), brand-compliant (DESIGN §1), and `tidalTrackUrl` is a one-line swap for the SDK later. Phase 5's "Player SDK" references repointed at 3.5. |
+| 2026-05-26 | Phase 3 | Add-to-library verified live: `POST /userCollectionTracks/me/relationships/items` *does* support track writes | Pre-implementation the GitHub discussion #90 suggested only albums/artists/playlists were writable. Checking the current `tidal-api-oas.json` showed POST + DELETE on the tracks-items relationship, so the discussion is stale. Endpoint + JSON:API body recorded in the Phase 3 notes. POST-against-`me` (vs a real collection id) is the one piece still unconfirmed live. |
+| 2026-05-26 | Phase 3 | `feedback_events` is an append-only log; like/dislike post only on activation | Simplest shape for Phase 4's aggregation (latest-signal-per-song) and matches "events written" in the done-when. No "unlike" event — toggle-off is visual-only. `add` writes only after the TIDAL add succeeds (a recorded `add` implies the library write happened). |
 | 2026-05-26 | Phase 2 | Malformed-LLM-response handling deferred | `generateRecommendations` does `JSON.parse(text)` with no guard. If Gemini ever returns non-JSON despite `responseSchema` (e.g. fenced code, a prose apology), the parse throws and `POST /api/chat` 500s with no guidance to the user. The LLM call is load-bearing so we can't fabricate recs, but we should catch the parse failure and return a structured, user-facing error (mirroring the `no_api_key` path) instead of a raw 500. Low likelihood with `responseSchema` on `gemini-2.5-flash`, so deferred — pick up when chat error UX is revisited (Phase 6 polish or sooner). |
 
 ---

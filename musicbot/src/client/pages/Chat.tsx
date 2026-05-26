@@ -9,7 +9,13 @@ import {
 	RecommendationCard,
 	type Recommendation,
 } from "../components/RecommendationCard";
-import { NoApiKeyError, getLibraryCount, sendChat, syncLibrary } from "../lib/api";
+import {
+	NoApiKeyError,
+	getLibraryCount,
+	sendChat,
+	sendFeedback,
+	syncLibrary,
+} from "../lib/api";
 import { Link } from "../lib/router";
 
 // Shown before the first prompt so the screen isn't empty; replaced by real
@@ -155,7 +161,10 @@ export function Chat() {
 						<ul className="mt-4 space-y-3">
 							{recs.map((rec) => (
 								<li key={rec.id}>
-									<RecommendationCard rec={rec} />
+									<RecommendationCard
+										rec={rec}
+										onAction={(kind) => sendFeedback(rec.id, kind)}
+									/>
 								</li>
 							))}
 						</ul>

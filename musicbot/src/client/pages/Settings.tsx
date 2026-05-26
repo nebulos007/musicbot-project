@@ -52,6 +52,14 @@ export function Settings() {
 						Paste your Google AI Studio key. It's stored per-user and used only
 						to make recommendations on your behalf.
 					</p>
+					<a
+						href="https://aistudio.google.com/apikey"
+						target="_blank"
+						rel="noopener noreferrer"
+						className="mt-2 inline-flex text-sm font-medium text-teal-400 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-800"
+					>
+						Get a key from Google AI Studio →
+					</a>
 					<label
 						htmlFor="byok-key"
 						className="mt-4 block text-sm font-medium text-stone-100"

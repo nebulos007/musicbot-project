@@ -75,3 +75,23 @@ export async function saveApiKey(key: string): Promise<void> {
 	});
 	if (!res.ok) throw new Error(`save key failed: ${res.status}`);
 }
+
+export type FeedbackKind = "like" | "dislike" | "add";
+
+export async function sendFeedback(
+	songId: string,
+	kind: FeedbackKind,
+): Promise<void> {
+	const res = await apiFetch("/api/feedback", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ songId, kind }),
+	});
+	if (!res.ok) throw new Error(`feedback failed: ${res.status}`);
+}
+
+// "Listen on TIDAL" deep link. Interim playback for v1 until the Player SDK
+// lands in its own slice; Phase 5's library rows reuse this same helper.
+export function tidalTrackUrl(songId: string): string {
+	return `https://listen.tidal.com/track/${encodeURIComponent(songId)}`;
+}

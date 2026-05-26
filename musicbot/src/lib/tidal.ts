@@ -404,3 +404,50 @@ export async function searchTrack(
 
 	return { tidalId: firstTrackId, title, artist, album: albumTitle, albumArtUrl };
 }
+
+// --- Library writes --------------------------------------------------------
+// Add a catalog track to the authenticated user's TIDAL collection. Verified
+// against the live tidal-api-oas.json (2026-05-26): POST to the to-many items
+// relationship with a JSON:API resource-identifier array. `me` resolves to the
+// authenticated user (same literal Phase 1c uses for the GET).
+
+export type AddToLibraryOpts = {
+	accessToken: string;
+	sleep?: (seconds: number) => Promise<void>;
+};
+
+export async function addToLibrary(
+	trackId: string,
+	opts: AddToLibraryOpts,
+	countryCode = "US",
+): Promise<void> {
+	const url =
+		`${TIDAL_API_BASE}/userCollectionTracks/me/relationships/items` +
+		`?countryCode=${countryCode}`;
+	const body = JSON.stringify({ data: [{ type: "tracks", id: trackId }] });
+	const sleep = opts.sleep ?? defaultSleep;
+	let attempt = 0;
+	for (;;) {
+		const res = await fetch(url, {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${opts.accessToken}`,
+				"content-type": "application/vnd.api+json",
+				accept: "application/vnd.api+json",
+			},
+			body,
+		});
+		if (res.status === 429 && attempt < MAX_RETRIES) {
+			await sleep(parseRetryAfter(res.headers.get("retry-after")));
+			attempt++;
+			continue;
+		}
+		// 409 = already in the collection; adding is idempotent, so treat as done.
+		if (!res.ok && res.status !== 409) {
+			throw new Error(
+				`TIDAL add-to-library failed: ${res.status} ${await res.text()}`,
+			);
+		}
+		return;
+	}
+}
