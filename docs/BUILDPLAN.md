@@ -330,11 +330,11 @@ The owner runs this against prod (it needs a real TIDAL login, the BYOK key, and
 | Cold-start today (empty profile) | 150 artists + genre/era reasoning clause |
 | Warm (after feedback) | 150 artists + genre/era clause + populated taste profile |
 
-**Steps:**
-1. **Pass A — cold-start (profile currently empty):** run the three baseline prompts, score Fit / Discovery / Grounded / Gets-me (1–5): (1) "moody late-night drive"; (2) "like [top artist] but more upbeat"; (3) "an artist I probably haven't heard".
-2. **Build a profile:** give **~10 feedbacks across rec cards, including several dislikes** (currently zero — the "like X but different" lift leans on dislikes-as-exclusions), spread across distinct artists for breadth.
-3. **Pass B — warm:** re-run the same three prompts, score again.
-4. **Verify the objective half:** `SELECT profile_json FROM taste_profile_snapshots ORDER BY id DESC LIMIT 1` (or the AI Gateway log) should show the warm prompt carried the loved/disliked artists. Compare Pass B vs Pass A vs the memory baseline; success = Discovery/Gets-me on "like X but different" beats the baseline `1`.
+**How to run it (organic usage — owner's preferred flow, 2026-05-26):** the profile is recomputed from *all* feedback on every chat, so there is **no separate "give feedback" step**. Just use the app and react (add / like / **dislike**) to recs as they appear; each subsequent prompt already reflects everything reacted to so far.
+1. **Capture the cold baseline first:** on the session's first chat (profile empty), ask the tracer prompt *"like [top artist] but more upbeat"* and **screenshot/jot the recs** — rec lists aren't persisted yet (Phase 5), so this is the only record of the "before".
+2. **Use it naturally:** run the other baseline prompts ("moody late-night drive", "an artist I probably haven't heard") and whatever else, reacting to recs as you go. **Hit Dislike when something's off** — the "avoid" half of the profile only exists once dislikes do (currently 0).
+3. **Re-ask the tracer near the end** (warm profile), screenshot again, and score both passes on Fit / Discovery / Grounded / Gets-me against the memory baseline.
+4. **Verify the objective half:** `SELECT profile_json FROM taste_profile_snapshots ORDER BY id DESC LIMIT 1` (or the AI Gateway log) confirms the warm prompt carried the loved/disliked artists. Success = Discovery/Gets-me on "like X but different" beats the baseline `1`. Don't chase perfect isolation — the bar is "noticeably better after a session," not a sterile A/B.
 
 ---
 
