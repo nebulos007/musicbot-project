@@ -5,6 +5,7 @@ import {
 	summarizeLibrary,
 } from "../lib/promptTemplates";
 import { type SessionVariables, requireSession } from "../lib/session";
+import { type FeedbackEvent, deriveTasteProfile } from "../lib/tasteProfile";
 import { byokKvKey, refreshIfNeeded, searchTrack } from "../lib/tidal";
 
 export const chatRouter = new Hono<{
@@ -44,11 +45,43 @@ chatRouter.post("/", async (c) => {
 		.bind(userId)
 		.all<{ title: string; artist: string }>();
 
+	// Derive the taste profile from explicit feedback (oldest-first, so the
+	// latest signal per song wins) and inject it into the prompt. With no
+	// feedback yet the profile is empty and the prompt is the cold-start prompt.
+	const feedback = await c.env.DB.prepare(
+		"SELECT song_id, kind, title, artist FROM feedback_events WHERE user_id = ? ORDER BY id ASC",
+	)
+		.bind(userId)
+		.all<{
+			song_id: string;
+			kind: FeedbackEvent["kind"];
+			title: string | null;
+			artist: string | null;
+		}>();
+	const tasteProfile = deriveTasteProfile(
+		(feedback.results ?? []).map((r) => ({
+			songId: r.song_id,
+			kind: r.kind,
+			title: r.title,
+			artist: r.artist,
+		})),
+	);
+
 	const { system, user } = buildRecommendationPrompt({
 		librarySummary: summarizeLibrary(lib.results ?? []),
 		userPrompt: prompt,
 		count: MAX_RECS,
+		tasteProfile,
 	});
+
+	// Snapshot the profile that drove this request (observability + before/after
+	// demo). Best-effort: a snapshot write must never fail the chat.
+	await c.env.DB.prepare(
+		"INSERT INTO taste_profile_snapshots (user_id, profile_json, created_at) VALUES (?, ?, ?)",
+	)
+		.bind(userId, JSON.stringify(tasteProfile), Math.floor(Date.now() / 1000))
+		.run()
+		.catch(() => {});
 
 	const result = await generateRecommendations({
 		apiKey,

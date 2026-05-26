@@ -78,14 +78,18 @@ export async function saveApiKey(key: string): Promise<void> {
 
 export type FeedbackKind = "like" | "dislike" | "add";
 
+// title/artist let the taste profile name what was liked/disliked — recs aren't
+// in the synced library, so the song id alone carries no meaning server-side.
 export async function sendFeedback(
 	songId: string,
 	kind: FeedbackKind,
+	title?: string,
+	artist?: string,
 ): Promise<void> {
 	const res = await apiFetch("/api/feedback", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ songId, kind }),
+		body: JSON.stringify({ songId, kind, title, artist }),
 	});
 	if (!res.ok) throw new Error(`feedback failed: ${res.status}`);
 }

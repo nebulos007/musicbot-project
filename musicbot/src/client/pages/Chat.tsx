@@ -163,7 +163,9 @@ export function Chat() {
 								<li key={rec.id}>
 									<RecommendationCard
 										rec={rec}
-										onAction={(kind) => sendFeedback(rec.id, kind)}
+										onAction={(kind, r) =>
+											sendFeedback(r.id, kind, r.title, r.artist)
+										}
 									/>
 								</li>
 							))}

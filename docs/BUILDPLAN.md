@@ -2,7 +2,7 @@
 
 > **Status:** Draft
 > **Last updated:** 2026-05-26
-> **Current phase:** Phase 4 (taste profile that learns) — Phase 3 shipped **and deployed** 2026-05-26 to https://musicbot.musicbot-cs.workers.dev (remote D1 migrated; AI Gateway slug + Google BYOK key set; prod secrets pushed; OAuth + add-to-collection verified live). Real in-app playback (TIDAL Player SDK) is carved into **Phase 3.5**; Phase 3 ships Play as a "Listen on TIDAL" deep link.
+> **Current phase:** Phase 4 (taste profile that learns) — **shipped and deployed 2026-05-26** to https://musicbot.musicbot-cs.workers.dev (remote D1 migrated: `feedback_events` ALTERed for `title`/`artist`, `taste_profile_snapshots` created — 5 tables; version `bb45ea3b`; post-deploy smoke: `/api/health` 200, `/api/chat` + `/api/feedback` 401 without a session). **Live before/after re-score still pending.** Phase 3 shipped **and deployed** 2026-05-26 to https://musicbot.musicbot-cs.workers.dev (remote D1 migrated; AI Gateway slug + Google BYOK key set; prod secrets pushed; OAuth + add-to-collection verified live). Real in-app playback (TIDAL Player SDK) is carved into **Phase 3.5**; Phase 3 ships Play as a "Listen on TIDAL" deep link. The pre-Phase-4 `searchTrack` hardening was **consciously deferred** (owner chose Phase 4 first, 2026-05-26 — see decision log).
 
 ---
 
@@ -291,27 +291,30 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 
 **Context to load:** PRD §3 (success criteria), §4 story 2, §7 (cold-start risk); DESIGN §3; Phase 1a–1d + Phases 2–3 files.
 
-**Files this phase creates/modifies:**
-- `musicbot/src/lib/tasteProfile.ts` — derive a profile from library + feedback (favored genres, artists, eras; recent dislikes as exclusions)
-- `musicbot/src/lib/promptTemplates.ts` — inject profile signals
-- `musicbot/src/routes/chat.ts` — call `tasteProfile` before LLM
-- `musicbot/src/db/schema.sql` — add `taste_profile_snapshots` (for observability + demo)
+**Files created/modified (actuals, 2026-05-26):**
+- `musicbot/src/lib/tasteProfile.ts` — `deriveTasteProfile(events)` → `{ lovedArtists, dislikedArtists, dislikedTracks }`; latest-signal-per-song, like/add positive + dislike negative, never excludes an also-loved artist, capped lists. **Artist/track level only** — genres/eras aren't derivable (D1 holds title+artist; album/genre deferred 2026-05-21), so the plan's "genres/eras" wording is unmet by design.
+- `musicbot/src/lib/promptTemplates.ts` — `buildRecommendationPrompt` gains optional `tasteProfile`; injects a "Taste profile…" block (lean-into / avoid / exact-track exclusions) + a system instruction to be more adventurous and honor exclusions. Empty profile (cold start) → byte-identical to the pre-Phase-4 prompt.
+- `musicbot/src/routes/chat.ts` — loads feedback events (oldest-first), derives the profile, injects it, and writes a `taste_profile_snapshots` row (best-effort `.catch(() => {})`).
+- `musicbot/src/db/schema.sql` — **added `title`/`artist` (nullable) to `feedback_events`** (beyond the listed files — see decision log) + `taste_profile_snapshots` table + `idx_taste_snapshots_user`.
+- `musicbot/src/routes/feedback.ts` + `src/client/lib/api.ts` (`sendFeedback`) + `src/client/pages/Chat.tsx` — thread `title`/`artist` through `POST /api/feedback` so the profile can name what was liked/disliked.
+- Tests: `test/tasteProfile.spec.ts` (7), extended `test/promptTemplates.spec.ts` (+2), `test/chat.spec.ts` (+2, captures the Gemini request body), `test/feedback.spec.ts` (+1).
 
-**Tests this phase adds:**
-- `tasteProfile.spec.ts` — sane profile given mock library + mock feedback
-- `chat.spec.ts` — prompt includes profile signals
-- Integration: simulate 10 likes/dislikes, assert next recs differ from baseline (deterministic via seeded LLM mock)
+**Notes for future sessions:**
+- **"Profile updates after every feedback event" = derived on demand.** The profile is recomputed from the full `feedback_events` log on every `/api/chat`, so any new event is reflected on the next chat; the snapshot row captures the profile that drove each request. No materialized per-event profile.
+- **Verifying "recs differ from baseline" without a real LLM:** the mock LLM is static, so "recs differ" is verified at the *prompt* the LLM receives — `chat.spec.ts` intercepts the Gemini POST via an undici `.reply((opts) => …)` callback and asserts the cold-start prompt has no taste block while the 10-feedback prompt carries the loved (`Alvvays`) + disliked (`Imagine Dragons`) artists. The prompt is what the AI Gateway logs, so this is the same surface the done-when's "verifiable via AI Gateway log" points at.
+- **Feedback now needs `title`/`artist`.** `RecommendationCard` already passed the full `rec` to `onAction`; `Chat.tsx` had been dropping it. Columns are nullable so older rows / non-rec feedback are fine.
+- **Remote D1 migration is a manual one-time `ALTER`** (`ALTER TABLE feedback_events ADD COLUMN title TEXT; ALTER TABLE feedback_events ADD COLUMN artist TEXT;`) because `CREATE IF NOT EXISTS` won't add columns to the existing live table. `taste_profile_snapshots` is created by re-running `schema.sql --remote`. **Applied 2026-05-26** — the ALTER lands the columns *after* `created_at` (cid 5/6), a harmless physical-order divergence from `schema.sql` since all SQL names columns explicitly.
 
 **Done-when:**
-- [ ] Profile updates after every feedback event.
-- [ ] LLM prompt visibly carries taste signals (verifiable via AI Gateway log).
-- [ ] Recs after 10 feedback events differ from cold-start recs in tests.
-- [ ] Demo can show before / after side-by-side.
-- [ ] Tests pass; deployed.
+- [x] Profile updates after every feedback event (derived on demand; snapshot per chat).
+- [x] LLM prompt visibly carries taste signals — asserted against the captured Gemini request body (`chat.spec.ts`).
+- [x] Recs after 10 feedback events differ from cold-start recs in tests (verified at the prompt level — cold-start has no taste block, 10-feedback prompt carries loved/disliked artists).
+- [x] Demo can show before / after side-by-side (`taste_profile_snapshots` captures each chat's profile; re-score the [[project-coldstart-rec-baseline]] prompts live to show the lift).
+- [x] Tests pass (78/78), typecheck + build clean. **Deployed 2026-05-26** to https://musicbot.musicbot-cs.workers.dev; remote D1 migrated (`feedback_events` + `title`/`artist`, `taste_profile_snapshots` created). Live before/after re-score still pending.
 
 **Session budget:** 1–2.
 
-**Risks / unknowns:** Cold-start quality without play counts (PRD §7 — needs to be tested early); over-fitting to a single dislike; profile drift if an event is mis-clicked.
+**Risks / unknowns:** Cold-start quality without play counts (PRD §7 — needs to be tested early); over-fitting to a single dislike; profile drift if an event is mis-clicked. **Live before/after re-score still pending** — the real proof of Phase 4 is re-running the gut-check prompts on prod and beating the baseline's `Discovery 1` on "like X but different".
 
 ---
 
@@ -406,6 +409,10 @@ The chunkiest phase in this plan. **Split into four sub-phases (1a–1d)** to ke
 | 2026-05-26 | Phase 3, Phase 3.5 | Real Player SDK split out of Phase 3 into a new **Phase 3.5**; Phase 3 ships Play as a "Listen on TIDAL" deep link | The Player SDK is PRD §7's flagged biggest risk, needs a new dependency (`@tidal-music/player`) + an active subscription, and bundling it into the feedback phase would balloon a tidy 1-session slice. Phase 4's taste profile depends on the *feedback events*, not playback. Confirmed with the owner that in-app playback stays in v1. The deep link is functional now (no dead demo button), brand-compliant (DESIGN §1), and `tidalTrackUrl` is a one-line swap for the SDK later. Phase 5's "Player SDK" references repointed at 3.5. |
 | 2026-05-26 | Phase 3 | Add-to-library verified live: `POST /userCollectionTracks/me/relationships/items` *does* support track writes | Pre-implementation the GitHub discussion #90 suggested only albums/artists/playlists were writable. Checking the current `tidal-api-oas.json` showed POST + DELETE on the tracks-items relationship, so the discussion is stale. Endpoint + JSON:API body recorded in the Phase 3 notes. POST-against-`me` (vs a real collection id) is the one piece still unconfirmed live. |
 | 2026-05-26 | Phase 3 | `feedback_events` is an append-only log; like/dislike post only on activation | Simplest shape for Phase 4's aggregation (latest-signal-per-song) and matches "events written" in the done-when. No "unlike" event — toggle-off is visual-only. `add` writes only after the TIDAL add succeeds (a recorded `add` implies the library write happened). |
+| 2026-05-26 | Phase 4 | `searchTrack` hardening deferred — Phase 4 built first | The 2026-05-26 gut-check had agreed to harden catalog resolution *before* Phase 4 (dead cards starve the feedback signal). Owner chose to build Phase 4 first anyway. Risk accepted: some good recs still render as dead cards (no art, actions disabled) and contribute no `feedback_events` until `searchTrack` is fixed. Still the next task after Phase 4 deploys. |
+| 2026-05-26 | Phase 4 | `feedback_events` gained `title`/`artist` columns (beyond the listed 4 files) | The phase's file list assumed `feedback_events` (song_id + kind) was enough. It isn't: the profile must name liked/disliked *artists* for the LLM to act on, and recs aren't in `library_songs` to join against. Added nullable `title`/`artist` and threaded them through the feedback route + client (the card already passed the rec to `onAction`). Confirmed with owner before implementing. Forces a one-time remote `ALTER TABLE`. |
+| 2026-05-26 | Phase 4 | Taste profile is derived on demand + snapshotted at chat time, not materialized per event | Recomputing from the append-only log on each `/api/chat` keeps the profile trivially current ("updates after every feedback event") with no write amplification on the feedback path. The `taste_profile_snapshots` row written per chat is what powers the before/after demo. |
+| 2026-05-26 | Phase 4 | Profile is artist/track-level only — no genres/eras | The plan text said "favored genres, artists, eras". D1 only holds title+artist (album/genre/era enrichment was deferred 2026-05-21), so genres/eras can't be derived without per-track catalog lookups. Built what the data supports rather than faking signals; revisit if/when album/genre land. |
 | 2026-05-26 | Phase 2 | Malformed-LLM-response handling deferred | `generateRecommendations` does `JSON.parse(text)` with no guard. If Gemini ever returns non-JSON despite `responseSchema` (e.g. fenced code, a prose apology), the parse throws and `POST /api/chat` 500s with no guidance to the user. The LLM call is load-bearing so we can't fabricate recs, but we should catch the parse failure and return a structured, user-facing error (mirroring the `no_api_key` path) instead of a raw 500. Low likelihood with `responseSchema` on `gemini-2.5-flash`, so deferred — pick up when chat error UX is revisited (Phase 6 polish or sooner). |
 
 ---

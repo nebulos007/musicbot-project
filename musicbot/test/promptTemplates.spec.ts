@@ -47,4 +47,45 @@ describe("buildRecommendationPrompt", () => {
 		expect(user).toContain("SUMMARY_MARKER");
 		expect(user).toContain("more upbeat");
 	});
+
+	it("injects loved/disliked taste signals when a profile has signal", () => {
+		const { system, user } = buildRecommendationPrompt({
+			librarySummary: "SUMMARY",
+			userPrompt: "more like this",
+			count: 5,
+			tasteProfile: {
+				lovedArtists: ["Alvvays", "Snail Mail"],
+				dislikedArtists: ["Imagine Dragons"],
+				dislikedTracks: ["Believer — Imagine Dragons"],
+			},
+		});
+		expect(user).toContain("Alvvays");
+		expect(user).toContain("Snail Mail");
+		expect(user).toContain("Imagine Dragons");
+		expect(user).toContain("Believer — Imagine Dragons");
+		// System tells the LLM to honor exclusions and be adventurous.
+		expect(system).toContain("adventurous");
+		expect(system).toContain("Never recommend");
+	});
+
+	it("omits the taste block (and stays cold-start identical) for an empty profile", () => {
+		const base = buildRecommendationPrompt({
+			librarySummary: "SUMMARY",
+			userPrompt: "anything",
+			count: 5,
+		});
+		const empty = buildRecommendationPrompt({
+			librarySummary: "SUMMARY",
+			userPrompt: "anything",
+			count: 5,
+			tasteProfile: {
+				lovedArtists: [],
+				dislikedArtists: [],
+				dislikedTracks: [],
+			},
+		});
+		expect(empty).toEqual(base);
+		expect(empty.user).not.toContain("Taste profile");
+		expect(empty.system).not.toContain("adventurous");
+	});
 });

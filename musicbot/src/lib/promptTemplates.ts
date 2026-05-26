@@ -6,6 +6,8 @@
 // NULL until later phases), so the summary is total count + most-collected
 // artists. Phase 4 enriches this with a derived taste profile.
 
+import type { TasteProfile } from "./tasteProfile";
+
 export const MAX_SUMMARY_CHARS = 3000;
 const TOP_ARTISTS = 40;
 
@@ -32,21 +34,65 @@ export function summarizeLibrary(songs: LibrarySongLite[]): string {
 	return summary;
 }
 
+// A profile with no signal yet (cold start) is omitted entirely, so the prompt
+// is byte-for-byte the pre-Phase-4 prompt until the first feedback lands.
+function formatTasteProfile(p: TasteProfile): string {
+	const lines = ["Taste profile derived from the user's feedback:"];
+	if (p.lovedArtists.length) {
+		lines.push(
+			`- Lean into artists they've liked or added: ${p.lovedArtists.join(", ")}.`,
+		);
+	}
+	if (p.dislikedArtists.length) {
+		lines.push(
+			`- Avoid these artists they disliked: ${p.dislikedArtists.join(", ")}.`,
+		);
+	}
+	if (p.dislikedTracks.length) {
+		lines.push(
+			`- Never recommend these exact tracks (already disliked): ${p.dislikedTracks.join("; ")}.`,
+		);
+	}
+	return lines.join("\n");
+}
+
+function hasSignal(p?: TasteProfile): p is TasteProfile {
+	return (
+		!!p &&
+		(p.lovedArtists.length > 0 ||
+			p.dislikedArtists.length > 0 ||
+			p.dislikedTracks.length > 0)
+	);
+}
+
 export function buildRecommendationPrompt(params: {
 	librarySummary: string;
 	userPrompt: string;
 	count: number;
+	tasteProfile?: TasteProfile;
 }): { system: string; user: string } {
-	const system =
+	const profile = hasSignal(params.tasteProfile)
+		? params.tasteProfile
+		: undefined;
+
+	let system =
 		`You are a knowledgeable music recommender inside a TIDAL discovery app. ` +
 		`Given a summary of the user's library and a request, suggest exactly ${params.count} songs that fit the request. ` +
 		`Favor artists or songs the user does not already appear to have. ` +
 		`Respond only as JSON matching the provided schema: a short, friendly "reply" (one or two sentences) ` +
 		`and a "recommendations" array of objects with "title" and "artist".`;
 
-	const user =
-		`Library summary:\n${params.librarySummary}\n\n` +
-		`Request: ${params.userPrompt}`;
+	if (profile) {
+		system +=
+			` Use the taste profile to make "similar to" requests more adventurous — reach past the obvious. ` +
+			`Never recommend an artist or exact track the profile says to avoid.`;
+	}
+
+	let user = `Library summary:\n${params.librarySummary}`;
+	if (profile) {
+		user += `\n\n${formatTasteProfile(profile)}`;
+	}
+	user += `\n\nRequest: ${params.userPrompt}`;
 
 	return { system, user };
 }

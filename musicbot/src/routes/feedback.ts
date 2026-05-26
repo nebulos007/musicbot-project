@@ -15,13 +15,19 @@ feedbackRouter.post("/", async (c) => {
 	const userId = c.get("userId");
 
 	const body = await c.req
-		.json<{ songId?: string; kind?: string }>()
-		.catch(() => ({}) as { songId?: string; kind?: string });
+		.json<{ songId?: string; kind?: string; title?: string; artist?: string }>()
+		.catch(
+			() => ({}) as { songId?: string; kind?: string; title?: string; artist?: string },
+		);
 	const songId = typeof body.songId === "string" ? body.songId.trim() : "";
 	const kind = typeof body.kind === "string" ? body.kind : "";
 	if (!songId || !KINDS.has(kind)) {
 		return c.json({ error: "invalid_feedback" }, 400);
 	}
+	// title/artist come from the recommendation card so the taste profile can
+	// name what was liked/disliked (recs aren't in library_songs). Optional.
+	const title = typeof body.title === "string" ? body.title : null;
+	const artist = typeof body.artist === "string" ? body.artist : null;
 
 	// "add" must actually land in TIDAL before we record it, so a recorded
 	// event always implies the add succeeded (the UI reverts on a non-2xx).
@@ -35,9 +41,9 @@ feedbackRouter.post("/", async (c) => {
 	}
 
 	await c.env.DB.prepare(
-		"INSERT INTO feedback_events (user_id, song_id, kind, created_at) VALUES (?, ?, ?, ?)",
+		"INSERT INTO feedback_events (user_id, song_id, kind, title, artist, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 	)
-		.bind(userId, songId, kind, Math.floor(Date.now() / 1000))
+		.bind(userId, songId, kind, title, artist, Math.floor(Date.now() / 1000))
 		.run();
 
 	return c.json({ ok: true });

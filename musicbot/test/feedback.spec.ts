@@ -13,7 +13,7 @@ async function resetDb() {
 		"CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)",
 	);
 	await env.DB.exec(
-		"CREATE TABLE IF NOT EXISTS feedback_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, song_id TEXT NOT NULL, kind TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)",
+		"CREATE TABLE IF NOT EXISTS feedback_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, song_id TEXT NOT NULL, kind TEXT NOT NULL, title TEXT, artist TEXT, created_at INTEGER NOT NULL, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)",
 	);
 	await env.DB.exec("DELETE FROM feedback_events");
 	await env.DB.exec("DELETE FROM sessions");
@@ -100,6 +100,30 @@ describe("POST /api/feedback", () => {
 		expect(rows.results.length).toBe(1);
 		expect(rows.results[0]).toMatchObject({ song_id: "s1", kind: "like" });
 		expect(typeof rows.results[0].created_at).toBe("number");
+	});
+
+	it("stores the rec's title and artist with the event", async () => {
+		const { userId, cookie } = await seedAuthedUser();
+		const res = await SELF.fetch("http://example.com/api/feedback", {
+			method: "POST",
+			headers: { cookie, "content-type": "application/json" },
+			body: JSON.stringify({
+				songId: "77",
+				kind: "like",
+				title: "Archie, Marry Me",
+				artist: "Alvvays",
+			}),
+		});
+		expect(res.status).toBe(200);
+
+		const rows = await env.DB.prepare(
+			"SELECT title, artist FROM feedback_events WHERE user_id = ?",
+		)
+			.bind(userId)
+			.all<{ title: string; artist: string }>();
+		expect(rows.results).toMatchObject([
+			{ title: "Archie, Marry Me", artist: "Alvvays" },
+		]);
 	});
 
 	it("records a dislike event", async () => {
