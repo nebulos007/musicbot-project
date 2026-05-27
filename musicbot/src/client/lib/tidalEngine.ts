@@ -20,6 +20,15 @@ import type {
 export async function createTidalEngine(
 	credentialsProvider: CredentialsProvider,
 ): Promise<PlayerEngine> {
+	// The SDK's audio-context-store does an unguarded `new AudioContext()`. WebKit
+	// (older/iOS Safari) only exposes webkitAudioContext, so the SDK throws
+	// "undefined is not a constructor" mid-playback on mobile. Alias it before
+	// bootstrap — mirroring what the SDK's own bundled shaka build does for the
+	// same call (`new (window.AudioContext||window.webkitAudioContext)`).
+	if (typeof AudioContext === "undefined" && "webkitAudioContext" in window) {
+		// biome-ignore lint/suspicious/noExplicitAny: webkitAudioContext is untyped.
+		(window as any).AudioContext = (window as any).webkitAudioContext;
+	}
 	// biome-ignore lint/suspicious/noExplicitAny: SDK's CredentialsProvider type
 	// is structurally what we pass; cast to avoid coupling to its internal shape.
 	player.setCredentialsProvider(credentialsProvider as any);
@@ -57,8 +66,13 @@ export async function createTidalEngine(
 				.catch((e) => fail("load/play", e));
 		},
 		setNext(product: MediaProduct | null) {
-			// setNext(undefined) clears the queued next product.
-			player.setNext(product ?? undefined).catch((e) => fail("setNext", e));
+			// setNext(undefined) clears the queued next product. A failure here only
+			// concerns the *preloaded next* track, so log it rather than surfacing a
+			// fatal error: the current track keeps playing and the engine re-fetches
+			// on the next load().
+			player
+				.setNext(product ?? undefined)
+				.catch((e) => console.warn("setNext failed (non-fatal):", e));
 		},
 		play() {
 			player.play().catch((e) => fail("play", e));
