@@ -67,3 +67,24 @@ CREATE TABLE IF NOT EXISTS taste_profile_snapshots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_taste_snapshots_user ON taste_profile_snapshots(user_id);
+
+-- Phase 3.5: append-only log of in-app playback signal (full plays, early
+-- skips, repeats). Kept separate from feedback_events so passive listen signal
+-- stays distinct from explicit like/dislike/add; Phase 4's taste profile can
+-- opt into consuming it later. `kind` is 'play_complete' | 'skip' | 'repeat'
+-- (validated in the route, not via CHECK, to match the rest of this schema).
+-- `title`/`artist` mirror feedback_events so the signal can name the track.
+-- `ms_played` is how long the track played before the signal fired.
+CREATE TABLE IF NOT EXISTS listen_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  song_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT,
+  artist TEXT,
+  ms_played INTEGER,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_listen_events_user ON listen_events(user_id);

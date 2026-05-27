@@ -54,14 +54,11 @@ describe("RecommendationCard", () => {
 });
 
 describe("RecommendationCard actions", () => {
-	it("Play deep-links to the track on TIDAL", () => {
-		render(<RecommendationCard rec={realRec} />);
-		const play = screen.getByRole("link", { name: "Play" });
-		expect(play).toHaveAttribute(
-			"href",
-			"https://listen.tidal.com/track/12345",
-		);
-		expect(play).toHaveAttribute("target", "_blank");
+	it("Play enqueues the rec via onPlay", () => {
+		const onPlay = vi.fn();
+		render(<RecommendationCard rec={realRec} onPlay={onPlay} />);
+		fireEvent.click(screen.getByRole("button", { name: "Play" }));
+		expect(onPlay).toHaveBeenCalledWith(realRec);
 	});
 
 	it("Like toggles pressed + fill state and posts only on activation", () => {
@@ -140,7 +137,7 @@ describe("RecommendationCard actions", () => {
 	it("every control meets the 44px (h-11 w-11) tap-target floor", () => {
 		render(<RecommendationCard rec={realRec} />);
 		const controls = [
-			screen.getByRole("link", { name: "Play" }),
+			screen.getByRole("button", { name: "Play" }),
 			screen.getByRole("button", { name: "Add to library" }),
 			screen.getByRole("button", { name: "Like" }),
 			screen.getByRole("button", { name: "Dislike" }),

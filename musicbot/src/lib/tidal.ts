@@ -17,6 +17,10 @@ export type TidalTokens = {
 export const tokensKvKey = (userId: string) => `tidal_tokens:${userId}`;
 export const pkceKvKey = (state: string) => `pkce:${state}`;
 export const byokKvKey = (userId: string) => `byok_key:${userId}`;
+// App-level (client-credentials) token, shared across users. Used only for the
+// Player SDK's 30s-preview playback — full-track streaming isn't available to
+// third-party web apps (see clientCredentialsToken).
+export const APP_TOKEN_KV_KEY = "tidal_app_token";
 
 function base64UrlEncode(bytes: Uint8Array): string {
 	let s = "";
@@ -157,6 +161,57 @@ export async function refreshIfNeeded(
 	});
 	await env.SESSIONS.put(tokensKvKey(userId), JSON.stringify(fresh));
 	return fresh.accessToken;
+}
+
+// --- App token (client credentials) ----------------------------------------
+// Mints an app-authenticated token via the OAuth client_credentials grant,
+// cached in KV (~4h, the token's own lifetime). This is what the browser Player
+// SDK uses: TIDAL only serves 30-second previews to a third-party app token
+// (full-track streaming requires r_usr+playback scopes that aren't grantable to
+// web apps — verified 2026-05-26), and previews don't depend on the user's
+// subscription. The client secret never leaves the Worker.
+
+export type AppToken = { accessToken: string; expiresAt: number };
+
+const APP_TOKEN_LEEWAY_SECONDS = 120;
+
+export async function clientCredentialsToken(env: Env): Promise<AppToken> {
+	const cached = (await env.SESSIONS.get(
+		APP_TOKEN_KV_KEY,
+		"json",
+	)) as AppToken | null;
+	if (
+		cached &&
+		cached.expiresAt - APP_TOKEN_LEEWAY_SECONDS > Math.floor(Date.now() / 1000)
+	) {
+		return cached;
+	}
+	const basic = btoa(`${env.TIDAL_CLIENT_ID}:${env.TIDAL_CLIENT_SECRET}`);
+	const res = await fetch(TIDAL_TOKEN_URL, {
+		method: "POST",
+		headers: {
+			authorization: `Basic ${basic}`,
+			"content-type": "application/x-www-form-urlencoded",
+		},
+		body: new URLSearchParams({ grant_type: "client_credentials" }),
+	});
+	if (!res.ok) {
+		throw new Error(
+			`TIDAL client_credentials failed: ${res.status} ${await res.text()}`,
+		);
+	}
+	const json = (await res.json()) as {
+		access_token: string;
+		expires_in: number;
+	};
+	const token: AppToken = {
+		accessToken: json.access_token,
+		expiresAt: Math.floor(Date.now() / 1000) + json.expires_in,
+	};
+	await env.SESSIONS.put(APP_TOKEN_KV_KEY, JSON.stringify(token), {
+		expirationTtl: json.expires_in,
+	});
+	return token;
 }
 
 // --- Library sync ---------------------------------------------------------

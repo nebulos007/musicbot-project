@@ -30,6 +30,7 @@
   "dependencies": {
     "@headlessui/react": "^2.2.10",
     "@heroicons/react": "^2.2.0",
+    "@tidal-music/player": "^0.18.1",
     "hono": "^4.12.21",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"

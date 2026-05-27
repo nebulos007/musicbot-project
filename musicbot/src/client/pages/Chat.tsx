@@ -16,6 +16,7 @@ import {
 	sendFeedback,
 	syncLibrary,
 } from "../lib/api";
+import { usePlayer } from "../lib/player";
 import { Link } from "../lib/router";
 
 // Shown before the first prompt so the screen isn't empty; replaced by real
@@ -51,6 +52,7 @@ export function Chat() {
 	const [messages, setMessages] = useState<Message[]>([]);
 	const [recs, setRecs] = useState<Recommendation[]>(PLACEHOLDER_RECS);
 	const [pending, setPending] = useState(false);
+	const { playQueue } = usePlayer();
 
 	useEffect(() => {
 		let cancelled = false;
@@ -121,8 +123,9 @@ export function Chat() {
 		}
 	}
 
+	// pb-28 keeps the chat input clear of the fixed player bar (DESIGN §6).
 	return (
-		<div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col px-6 py-6">
+		<div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col px-6 pt-6 pb-28">
 			<header className="flex items-center justify-between">
 				<h1 className="font-display text-2xl text-stone-100">musicbot</h1>
 				<Link
@@ -166,6 +169,7 @@ export function Chat() {
 										onAction={(kind, r) =>
 											sendFeedback(r.id, kind, r.title, r.artist)
 										}
+										onPlay={(r) => playQueue(recs, recs.indexOf(r))}
 									/>
 								</li>
 							))}

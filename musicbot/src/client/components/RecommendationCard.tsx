@@ -10,7 +10,7 @@ import {
 	HandThumbUpIcon as HandThumbUpSolidIcon,
 } from "@heroicons/react/24/solid";
 import { useState } from "react";
-import { type FeedbackKind, tidalTrackUrl } from "../lib/api";
+import type { FeedbackKind } from "../lib/api";
 
 export type Recommendation = {
 	id: string;
@@ -23,6 +23,9 @@ export type Recommendation = {
 type Props = {
 	rec: Recommendation;
 	onAction?: (kind: FeedbackKind, rec: Recommendation) => void | Promise<void>;
+	// Enqueue + play this rec via the app's player (Phase 3.5). The deep-link
+	// fallback for non-streamable accounts lives in the player bar, not here.
+	onPlay?: (rec: Recommendation) => void;
 };
 
 // 44px tap target floor (DESIGN §5, §7). `transition` + motion-safe scale gives
@@ -34,7 +37,7 @@ const buttonBase =
 // The icon also swaps outline→solid (or +→✓) so color is never the only signal.
 const activeButton = "border-teal-500 text-teal-400";
 
-export function RecommendationCard({ rec, onAction }: Props) {
+export function RecommendationCard({ rec, onAction, onPlay }: Props) {
 	// Only real TIDAL tracks are actionable. Their ids are numeric strings;
 	// placeholders ("p1") and catalog misses ("llm:0") aren't, so there's
 	// nothing to play, add, or meaningfully rate — disable the actions.
@@ -84,26 +87,15 @@ export function RecommendationCard({ rec, onAction }: Props) {
 				<p className="truncate text-sm text-stone-400">{rec.artist}</p>
 			</div>
 			<div className="flex flex-none gap-2">
-				{resolved ? (
-					<a
-						href={tidalTrackUrl(rec.id)}
-						target="_blank"
-						rel="noopener noreferrer"
-						aria-label="Play"
-						className={buttonBase}
-					>
-						<PlayIcon className="h-5 w-5" aria-hidden="true" />
-					</a>
-				) : (
-					<button
-						type="button"
-						aria-label="Play"
-						disabled
-						className={buttonBase}
-					>
-						<PlayIcon className="h-5 w-5" aria-hidden="true" />
-					</button>
-				)}
+				<button
+					type="button"
+					aria-label="Play"
+					disabled={!resolved}
+					onClick={() => onPlay?.(rec)}
+					className={buttonBase}
+				>
+					<PlayIcon className="h-5 w-5" aria-hidden="true" />
+				</button>
 				<button
 					type="button"
 					aria-label={added ? "Added to library" : "Add to library"}
