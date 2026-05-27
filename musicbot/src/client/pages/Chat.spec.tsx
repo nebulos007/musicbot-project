@@ -57,8 +57,13 @@ describe("Chat", () => {
 			if (url.endsWith("/api/library/count")) {
 				return jsonResponse({ count: 10 });
 			}
-			if (url.endsWith("/api/library/sync") && init?.method === "POST") {
-				return jsonResponse({ synced: 13 });
+			if (url.includes("/api/library/sync") && init?.method === "POST") {
+				return jsonResponse({
+					synced: 13,
+					complete: true,
+					syncId: 1,
+					nextPass: null,
+				});
 			}
 			throw new Error(`unexpected fetch: ${url}`);
 		});
@@ -75,7 +80,7 @@ describe("Chat", () => {
 			await screen.findByText("Loaded 13 songs from your library"),
 		).toBeInTheDocument();
 		expect(fetchMock).toHaveBeenCalledWith(
-			"/api/library/sync",
+			expect.stringContaining("/api/library/sync"),
 			expect.objectContaining({ method: "POST" }),
 		);
 	});

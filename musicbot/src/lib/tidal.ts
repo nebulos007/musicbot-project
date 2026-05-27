@@ -245,8 +245,23 @@ export type LibraryPage = {
 	nextPath: string | null;
 };
 
-const LIBRARY_COLLECTION_PATH =
-	"/userCollectionTracks/me/relationships/items?include=items,items.artists&countryCode=US&locale=en-US";
+// TIDAL's collection-items cursor pages over a single sort key and re-emits /
+// skips tracks at tie-clusters of equal keys (e.g. many tracks added in the same
+// second under -addedAt). A track skipped under one sort is near-certainly not at
+// a tie boundary under an unrelated sort, so the union across these orthogonal
+// sorts recovers the whole collection. On the free Workers plan two full passes
+// exceed the 50-subrequest cap, so /sync runs ONE sort per request and the client
+// loops over the passes — hence this list is exported for the route to index.
+export const LIBRARY_SORTS = ["-addedAt", "title", "artists.name"] as const;
+
+function libraryItemsPath(sort: string): string {
+	return (
+		"/userCollectionTracks/me/relationships/items" +
+		"?include=items,items.artists&countryCode=US&locale=en-US" +
+		`&sort=${encodeURIComponent(sort)}`
+	);
+}
+
 const MAX_RETRIES = 3;
 const DEFAULT_BACKOFF_SECONDS = 1;
 
@@ -343,17 +358,51 @@ export async function fetchLibraryPage(
 	}
 }
 
-export async function fetchAllLibrary(
+// TIDAL's authoritative collection size, read from the parent resource. Used as
+// the completeness target for the multi-sort union and to gate mirror deletes.
+// Returns null on any error so callers degrade to a single-pass, no-delete sync.
+export async function fetchCollectionSize(
+	opts: FetchLibraryOpts,
+): Promise<number | null> {
+	const sleep = opts.sleep ?? defaultSleep;
+	const url = `${TIDAL_API_BASE}/userCollectionTracks/me?countryCode=US&locale=en-US`;
+	try {
+		for (let attempt = 0; ; attempt++) {
+			const res = await fetch(url, {
+				headers: {
+					authorization: `Bearer ${opts.accessToken}`,
+					accept: "application/vnd.api+json",
+				},
+			});
+			if (res.status === 429 && attempt < MAX_RETRIES) {
+				await sleep(parseRetryAfter(res.headers.get("retry-after")));
+				continue;
+			}
+			if (!res.ok) return null;
+			const j = (await res.json()) as {
+				data?: { attributes?: { numberOfItems?: number } };
+			};
+			return j.data?.attributes?.numberOfItems ?? null;
+		}
+	} catch {
+		return null;
+	}
+}
+
+// Paginate one sort order to exhaustion. Callers union successive sorts (across
+// requests, on free tier) to recover tracks any single sort's cursor skips.
+export async function fetchLibrarySort(
+	sort: string,
 	opts: FetchLibraryOpts,
 ): Promise<LibrarySong[]> {
-	const all: LibrarySong[] = [];
-	let path: string | null = LIBRARY_COLLECTION_PATH;
+	const songs: LibrarySong[] = [];
+	let path: string | null = libraryItemsPath(sort);
 	while (path) {
 		const page: LibraryPage = await fetchLibraryPage(path, opts);
-		all.push(...page.songs);
+		songs.push(...page.songs);
 		path = page.nextPath;
 	}
-	return all;
+	return songs;
 }
 
 // --- Catalog search --------------------------------------------------------

@@ -273,6 +273,164 @@ describe("POST /api/library/sync", () => {
 		expect(all.results.length).toBe(1);
 		expect(all.results[0].synced_at).toBeGreaterThan(firstRow!.synced_at);
 	});
+
+	async function seedStaleSong(userId: string, songId: string) {
+		const old = Math.floor(Date.now() / 1000) - 1000;
+		await env.DB.prepare(
+			"INSERT INTO library_songs (user_id, song_id, title, artist, added_at, synced_at) VALUES (?, ?, ?, ?, ?, ?)",
+		)
+			.bind(userId, songId, "Gone", "Gone Artist", old, old)
+			.run();
+	}
+
+	it("mirrors deletions: sweeps rows TIDAL no longer has when the fetch is complete", async () => {
+		const { userId, cookie } = await seedAuthedUser();
+		await seedStaleSong(userId, "stale");
+
+		// Ground truth: collection now holds exactly 1 track.
+		fetchMock
+			.get("https://openapi.tidal.com")
+			.intercept({ method: "GET", path: /^\/v2\/userCollectionTracks\/me\?/ })
+			.reply(
+				200,
+				{ data: { id: "me", type: "userCollectionTracks", attributes: { numberOfItems: 1 } } },
+				{ headers: { "content-type": "application/vnd.api+json" } },
+			);
+		fetchMock
+			.get("https://openapi.tidal.com")
+			.intercept({ method: "GET", path: /^\/v2\/userCollectionTracks\/me\/relationships\/items/ })
+			.reply(
+				200,
+				libraryPage({
+					items: [{ id: "t1" }],
+					tracks: [{ id: "t1", title: "Kept", artistIds: ["a1"] }],
+					artists: [{ id: "a1", name: "Kept Artist" }],
+				}),
+				{ headers: { "content-type": "application/vnd.api+json" } },
+			);
+
+		const res = await SELF.fetch("http://example.com/api/library/sync", {
+			method: "POST",
+			headers: { cookie },
+		});
+		expect(res.status).toBe(200);
+		expect(await res.json()).toMatchObject({ synced: 1, removed: 1, complete: true });
+
+		const rows = await env.DB.prepare(
+			"SELECT song_id FROM library_songs WHERE user_id = ? ORDER BY song_id",
+		)
+			.bind(userId)
+			.all<{ song_id: string }>();
+		expect(rows.results.map((r) => r.song_id)).toEqual(["t1"]);
+	});
+
+	it("unions two passes (one sort each) into a complete, mirrored sync", async () => {
+		const { userId, cookie } = await seedAuthedUser();
+
+		// Collection has 3 tracks; probed once per pass (both passes see size 3).
+		for (let i = 0; i < 2; i++) {
+			fetchMock
+				.get("https://openapi.tidal.com")
+				.intercept({ method: "GET", path: /^\/v2\/userCollectionTracks\/me\?/ })
+				.reply(
+					200,
+					{ data: { id: "me", type: "userCollectionTracks", attributes: { numberOfItems: 3 } } },
+					{ headers: { "content-type": "application/vnd.api+json" } },
+				);
+		}
+		// Pass 0 (-addedAt) skips t3; pass 1 (title) skips t2 — neither sort alone
+		// is complete, but their union is. t2 is found ONLY in pass 0, so it must
+		// survive pass 1's mirror sweep (it shares the sync generation id).
+		fetchMock
+			.get("https://openapi.tidal.com")
+			.intercept({ method: "GET", path: /^\/v2\/userCollectionTracks\/me\/relationships\/items/ })
+			.reply(
+				200,
+				libraryPage({
+					items: [{ id: "t1" }, { id: "t2" }],
+					tracks: [
+						{ id: "t1", title: "Song One", artistIds: ["a1"] },
+						{ id: "t2", title: "Song Two", artistIds: ["a2"] },
+					],
+					artists: [
+						{ id: "a1", name: "Artist One" },
+						{ id: "a2", name: "Artist Two" },
+					],
+				}),
+				{ headers: { "content-type": "application/vnd.api+json" } },
+			);
+		fetchMock
+			.get("https://openapi.tidal.com")
+			.intercept({ method: "GET", path: /^\/v2\/userCollectionTracks\/me\/relationships\/items/ })
+			.reply(
+				200,
+				libraryPage({
+					items: [{ id: "t1" }, { id: "t3" }],
+					tracks: [
+						{ id: "t1", title: "Song One", artistIds: ["a1"] },
+						{ id: "t3", title: "Song Three", artistIds: ["a3"] },
+					],
+					artists: [
+						{ id: "a1", name: "Artist One" },
+						{ id: "a3", name: "Artist Three" },
+					],
+				}),
+				{ headers: { "content-type": "application/vnd.api+json" } },
+			);
+
+		const r0 = await SELF.fetch("http://example.com/api/library/sync?pass=0", {
+			method: "POST",
+			headers: { cookie },
+		});
+		const j0 = (await r0.json()) as { synced: number; complete: boolean; nextPass: number | null; syncId: number };
+		expect(j0).toMatchObject({ synced: 2, complete: false, nextPass: 1 });
+
+		const r1 = await SELF.fetch(
+			`http://example.com/api/library/sync?pass=${j0.nextPass}&syncId=${j0.syncId}`,
+			{ method: "POST", headers: { cookie } },
+		);
+		expect(await r1.json()).toMatchObject({ synced: 3, complete: true, nextPass: null });
+
+		const rows = await env.DB.prepare(
+			"SELECT song_id FROM library_songs WHERE user_id = ? ORDER BY song_id",
+		)
+			.bind(userId)
+			.all<{ song_id: string }>();
+		expect(rows.results.map((r) => r.song_id)).toEqual(["t1", "t2", "t3"]);
+	});
+
+	it("does not delete when the fetch is incomplete (collection size unknown)", async () => {
+		const { userId, cookie } = await seedAuthedUser();
+		await seedStaleSong(userId, "stale");
+
+		// Probe is unmocked -> total null -> complete false -> no mirror sweep.
+		fetchMock
+			.get("https://openapi.tidal.com")
+			.intercept({ method: "GET", path: /^\/v2\/userCollectionTracks\/me\/relationships\/items/ })
+			.reply(
+				200,
+				libraryPage({
+					items: [{ id: "t1" }],
+					tracks: [{ id: "t1", title: "Kept", artistIds: ["a1"] }],
+					artists: [{ id: "a1", name: "Kept Artist" }],
+				}),
+				{ headers: { "content-type": "application/vnd.api+json" } },
+			);
+
+		const res = await SELF.fetch("http://example.com/api/library/sync", {
+			method: "POST",
+			headers: { cookie },
+		});
+		expect(res.status).toBe(200);
+		expect(await res.json()).toMatchObject({ synced: 1, removed: 0, complete: false });
+
+		const rows = await env.DB.prepare(
+			"SELECT song_id FROM library_songs WHERE user_id = ? ORDER BY song_id",
+		)
+			.bind(userId)
+			.all<{ song_id: string }>();
+		expect(rows.results.map((r) => r.song_id)).toEqual(["stale", "t1"]);
+	});
 });
 
 describe("GET /api/library/count", () => {

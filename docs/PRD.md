@@ -92,7 +92,7 @@ The platform is newer than Spotify's or Apple's developer offerings; expect to d
 - Play counts and granular listening history are unlikely to be exposed to third-party apps (consistent with the broader streaming-API landscape). Taste profile must be built from library contents + in-app session tracking + explicit feedback.
 - The Player SDK requires an active Tidal subscription on the signed-in account for full-track playback; catalog and metadata endpoints work without one.
 - Skip detection will likely need to be inferred (track change before completion), not a native event. Expect ~1–2 second precision.
-- Library pagination behavior, rate limits, and 429 backoff semantics to be characterized in Phase 1.
+- Library pagination behavior, rate limits, and 429 backoff semantics to be characterized in Phase 1. **Characterized (Phase 1c/1c.1):** the collection-items cursor is unstable over the non-unique default `sort=-addedAt` — at tie-clusters it skips/re-emits tracks (~95 of 521 lost), so a complete fetch requires unioning passes over multiple sort orders. 429s carry `Retry-After`; honored with bounded retry. The free-plan 50-subrequest cap forces sync to run one sort pass per request, looped client-side.
 - OAuth 2.1 (authorization code + PKCE) — refresh-token handling on a Workers backend needs care; KV is the right place to keep tokens, not the client.
 - You can only track listening behavior that happens inside your app.
 

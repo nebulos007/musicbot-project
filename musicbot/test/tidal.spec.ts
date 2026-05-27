@@ -1,6 +1,10 @@
 import { fetchMock } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { fetchAllLibrary, fetchLibraryPage } from "../src/lib/tidal";
+import {
+	fetchCollectionSize,
+	fetchLibraryPage,
+	fetchLibrarySort,
+} from "../src/lib/tidal";
 
 beforeAll(() => {
 	fetchMock.activate();
@@ -116,7 +120,7 @@ describe("fetchLibraryPage 429 backoff", () => {
 	});
 });
 
-describe("fetchAllLibrary pagination", () => {
+describe("fetchLibrarySort pagination", () => {
 	it("follows links.next until exhausted", async () => {
 		// FIFO match: undici normalizes query params, so we match by pathname.
 		fetchMock
@@ -146,8 +150,49 @@ describe("fetchAllLibrary pagination", () => {
 				{ headers: { "content-type": "application/vnd.api+json" } },
 			);
 
-		const songs = await fetchAllLibrary({ accessToken: "tok", sleep: async () => {} });
+		const songs = await fetchLibrarySort("-addedAt", {
+			accessToken: "tok",
+			sleep: async () => {},
+		});
 		expect(songs.map((s) => s.songId)).toEqual(["t1", "t2"]);
 		expect(songs.map((s) => s.artist)).toEqual(["Artist 1", "Artist 2"]);
+	});
+});
+
+describe("fetchCollectionSize", () => {
+	it("reads numberOfItems from the parent resource", async () => {
+		fetchMock
+			.get("https://openapi.tidal.com")
+			.intercept({ method: "GET", path: /^\/v2\/userCollectionTracks\/me\?/ })
+			.reply(
+				200,
+				{
+					data: {
+						id: "me",
+						type: "userCollectionTracks",
+						attributes: { numberOfItems: 521 },
+					},
+				},
+				{ headers: { "content-type": "application/vnd.api+json" } },
+			);
+
+		const total = await fetchCollectionSize({
+			accessToken: "tok",
+			sleep: async () => {},
+		});
+		expect(total).toBe(521);
+	});
+
+	it("returns null on error so sync degrades to no mirror", async () => {
+		fetchMock
+			.get("https://openapi.tidal.com")
+			.intercept({ method: "GET", path: /^\/v2\/userCollectionTracks\/me\?/ })
+			.reply(500, "");
+
+		const total = await fetchCollectionSize({
+			accessToken: "tok",
+			sleep: async () => {},
+		});
+		expect(total).toBeNull();
 	});
 });

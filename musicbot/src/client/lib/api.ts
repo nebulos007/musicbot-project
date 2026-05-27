@@ -16,11 +16,32 @@ export async function getLibraryCount(): Promise<number> {
 	return json.count;
 }
 
+type SyncResponse = {
+	synced: number;
+	complete: boolean;
+	syncId: number;
+	nextPass: number | null;
+};
+
+// A full sync spans several requests (one TIDAL sort per request) to stay under
+// the Workers subrequest cap. We follow the server's `nextPass`, echoing its
+// `syncId` so every pass writes into the same sync generation, until the server
+// reports `complete` (or runs out of passes). Returns the final song count.
 export async function syncLibrary(): Promise<number> {
-	const res = await apiFetch("/api/library/sync", { method: "POST" });
-	if (!res.ok) throw new Error(`library/sync failed: ${res.status}`);
-	const json = (await res.json()) as { synced: number };
-	return json.synced;
+	let pass = 0;
+	let syncId: number | undefined;
+	let synced = 0;
+	for (;;) {
+		const q = new URLSearchParams({ pass: String(pass) });
+		if (syncId !== undefined) q.set("syncId", String(syncId));
+		const res = await apiFetch(`/api/library/sync?${q}`, { method: "POST" });
+		if (!res.ok) throw new Error(`library/sync failed: ${res.status}`);
+		const json = (await res.json()) as SyncResponse;
+		synced = json.synced;
+		syncId = json.syncId;
+		if (json.complete || json.nextPass === null) return synced;
+		pass = json.nextPass;
+	}
 }
 
 export type ChatRecommendation = {
